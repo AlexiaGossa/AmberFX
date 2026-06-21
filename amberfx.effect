@@ -1,0 +1,972 @@
+/*
+ film + camera simulation 
+ (c) Alexia Gossa 2026
+ 
+ Use brightness to limit de saturation
+ 
+
+*/
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float2 uv_offset;
+uniform float2 uv_scale;
+uniform float2 uv_size;
+
+sampler_state textureSampler {
+    Filter 		= Linear;
+    AddressU 	= Clamp;
+    AddressV 	= Clamp;
+};
+
+uniform int iGammaType<
+	string label 			= "Gamma";
+	string widget_type 		= "select";
+	int    option_0_value 	= 0;
+	string option_0_label 	= "2.0";
+	int    option_1_value 	= 1;
+	string option_1_label 	= "G4C";
+> = 1;
+
+
+uniform int iQuantification<
+	string label 			= "Quantification";
+	string widget_type 		= "select";
+	int    option_0_value 	= 0;
+	string option_0_label 	= "Normal";
+	int    option_1_value 	= 1;
+	string option_1_label 	= "Advanced";
+	int    option_2_value 	= 2;
+	string option_2_label 	= "Checker";
+> = 0;
+
+
+uniform int iDynamicRange<
+	string label 			= "Dynamic Range";
+	string widget_type 		= "select";
+	int    option_0_value 	= 0;
+	string option_0_label 	= "Normal 0-255";
+	int    option_1_value 	= 1;
+	string option_1_label 	= "Low 16-240";
+> = 0;
+
+
+uniform float fLumSat<
+    string label 			= "Film lum/sat";
+    string widget_type 		= "slider";
+    float minimum 			= 0.0;
+    float maximum 			= 1.0;
+    float step 				= 0.01;
+> = 0.2;
+
+uniform float fIntensity<
+    string label 			= "Skin Processing";
+    string widget_type 		= "slider";
+    float minimum 			= 0.0;
+    float maximum 			= 1.0;
+    float step 				= 0.01;
+> = 0.3;
+
+uniform int iSkinDetection<
+	string label 			= "Skin Checker";
+	string widget_type 		= "select";
+	int    option_0_value 	= 0;
+	string option_0_label 	= "Normal";
+	int    option_1_value 	= 1;
+	string option_1_label 	= "Show area";
+	
+> = 0;
+
+
+uniform float fSkinTone_C_lo<
+    string label 			= "SkinTone C_lo";
+    string widget_type 		= "slider";
+    float minimum 			= 0.00;
+    float maximum 			= 0.10;
+    float step 				= 0.01;
+> = 0.01;
+
+uniform float fSkinTone_C_hi<
+    string label 			= "SkinTone C_hi";
+    string widget_type 		= "slider";
+    float minimum 			= 0.05;
+    float maximum 			= 0.20;
+    float step 				= 0.01;
+> = 0.12;
+
+uniform float fSkinTone_C_margin<
+    string label 			= "SkinTone C_margin";
+    string widget_type 		= "slider";
+    float minimum 			= 0.01;
+    float maximum 			= 0.10;
+    float step 				= 0.01;
+> = 0.05;
+
+uniform float fSkinTone_h_lo<
+    string label 			= "SkinTone h_lo";
+    string widget_type 		= "slider";
+    float minimum 			= 0.05;
+    float maximum 			= 0.50;
+    float step 				= 0.01;
+> = 0.10;
+
+uniform float fSkinTone_h_hi<
+    string label 			= "SkinTone h_hi";
+    string widget_type 		= "slider";
+    float minimum 			= 1.00;
+    float maximum 			= 1.80;
+    float step 				= 0.01;
+> = 1.30;
+
+uniform float fSkinTone_h_margin<
+    string label 			= "SkinTone h_margin";
+    string widget_type 		= "slider";
+    float minimum 			= 0.01;
+    float maximum 			= 0.30;
+    float step 				= 0.01;
+> = 0.10;
+
+
+uniform float elapsed_time;
+
+struct vertData {
+    float4 pos : POSITION;
+    float2 uv  : TEXCOORD0;
+};
+
+
+
+vertData mainTransform(vertData v_in)
+{
+	vertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv = v_in.uv * uv_scale + uv_offset;
+	return vert_out;
+}
+
+float hashGet(float2 p)
+{
+    float3 p3 = frac(float3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return frac((p3.x + p3.y) * p3.z);
+}
+
+/*
+
+	RGB <=> LMS <=> Oklab
+	https://bottosson.github.io/posts/oklab/#converting-from-linear-srgb-to-oklab
+
+*/
+
+float3 gammaForward_2 ( float3 c )
+{
+	float3 	oColorToGamma2;
+	
+	//RGB pow 2
+	oColorToGamma2.r = c.r*c.r;
+	oColorToGamma2.g = c.g*c.g;
+	oColorToGamma2.b = c.b*c.b;
+	
+	return oColorToGamma2;
+}
+
+
+float3 clippingCompensation ( float3 c )
+{	
+	float 	fTemp;
+	
+	fTemp = max ( c.r, c.g );
+	fTemp = max ( c.b, fTemp );
+	if (fTemp>=0.999)
+	{
+		c.r = ( c.r + fTemp*pow(c.r,0.707) ) * 0.5;
+		c.g = ( c.g + fTemp*pow(c.g,0.707) ) * 0.5;
+		c.b = ( c.b + fTemp*pow(c.b,0.707) ) * 0.5;
+	}
+	
+	return c;
+}
+
+
+float3 gammaForward_G4C ( float3 c )
+{
+	float3 	oColorToGamma2;
+	float3 	oColorToGamma4;
+	float3 	oColorLo;
+	float3 	oColorHi;
+	float 	fTemp;
+	float 	fOffsetI;
+	float 	fOffsetO;
+	float 	fMultiplierI;
+	float 	fMultiplierO;
+	float   fRatio;
+
+	//RGB pow 2
+	oColorToGamma2.r = c.r*c.r;
+	oColorToGamma2.g = c.g*c.g;
+	oColorToGamma2.b = c.b*c.b;
+	
+	//RGB pow 4
+	oColorToGamma4.r = oColorToGamma2.r*oColorToGamma2.r;
+	oColorToGamma4.g = oColorToGamma2.g*oColorToGamma2.g;
+	oColorToGamma4.b = oColorToGamma2.b*oColorToGamma2.b;
+	
+	fOffsetI 		= 0.50;
+	fMultiplierI 	= 4.00;
+	
+	fOffsetO 		= fOffsetI*fOffsetI;
+	fTemp 			= fMultiplierI + fOffsetI;
+	fTemp 			= fTemp * fTemp;
+	fTemp 			= fTemp - fOffsetO;
+	fMultiplierO 	= 1.0 / fTemp;
+	
+	//Low curve
+	oColorLo.r = ( c.r * fMultiplierI ) + fOffsetI;
+	oColorLo.g = ( c.g * fMultiplierI ) + fOffsetI;
+	oColorLo.b = ( c.b * fMultiplierI ) + fOffsetI;
+	oColorLo.r = oColorLo.r * oColorLo.r;
+	oColorLo.g = oColorLo.g * oColorLo.g;
+	oColorLo.b = oColorLo.b * oColorLo.b;
+	oColorLo.r = ( oColorLo.r - fOffsetO ) * fMultiplierO;
+	oColorLo.g = ( oColorLo.g - fOffsetO ) * fMultiplierO;
+	oColorLo.b = ( oColorLo.b - fOffsetO ) * fMultiplierO;
+	
+	//High curve
+	oColorHi.r = pow ( c.r, 0.2707 );
+	oColorHi.g = pow ( c.g, 0.2707 );
+	oColorHi.b = pow ( c.b, 0.2707 );
+	
+	//Mix between Low and High
+	c.r = ( oColorLo.r * (1.0-oColorToGamma4.r) ) + ( oColorHi.r * oColorToGamma4.r );
+	c.g = ( oColorLo.g * (1.0-oColorToGamma4.g) ) + ( oColorHi.g * oColorToGamma4.g );
+	c.b = ( oColorLo.b * (1.0-oColorToGamma4.b) ) + ( oColorHi.b * oColorToGamma4.b );
+	
+	return c;
+}
+
+float3 gammaBackward ( float3 c )
+{
+	c.r = pow ( c.r, 0.50 );
+	c.g = pow ( c.g, 0.50 );
+	c.b = pow ( c.b, 0.50 );
+	return c;
+}
+
+float3 convertRGBtoLMS ( float3 c )
+{
+	if (iDynamicRange==1)
+	{
+		c = c - float3 ( 0.0627, 0.0627, 0.0627 );
+		c = c * float3 ( 1.1383, 1.1383, 1.1383 );
+	}
+
+	if (iGammaType==0)
+		c = gammaForward_2 ( c );
+	else
+		c = gammaForward_G4C ( c );
+	
+    float l = dot(c, float3(0.4122214708, 0.5363325363, 0.0514459929 ) );
+    float m = dot(c, float3(0.2119034982, 0.6806995451, 0.1073969566 ) );
+    float s = dot(c, float3(0.0883024619, 0.2817188376, 0.6299787005 ) );
+    return float3(l, m, s);
+}
+
+float cbrt ( float fValue )
+{
+	return pow ( fValue, 1.0 / 3.0 );
+}
+
+float3 convertLMStoRGB ( float3 c )
+{
+	float r = dot ( c, float3(+4.0767416621, -3.3077115913, +0.2309699292 ) );
+	float g = dot ( c, float3(-1.2684380046, +2.6097574011, -0.3413193965 ) );
+	float b = dot ( c, float3(-0.0041960863, -0.7034186147, +1.7076147010 ) );
+	c.r = clamp(r, 0.0, 1.0);
+	c.g = clamp(g, 0.0, 1.0);
+	c.b = clamp(b, 0.0, 1.0);
+	
+	return gammaBackward ( c );
+}
+
+float3 convertLMStoOKLab ( float3 c )
+{
+	float3 lms;
+	lms.r = cbrt(c.r);
+	lms.g = cbrt(c.g);
+	lms.b = cbrt(c.b);
+	float L = dot ( lms, float3( +0.2104542553, +0.7936177850, -0.0040720468 ) );
+	float a = dot ( lms, float3( +1.9779984951, -2.4285922050, +0.4505937099 ) );
+	float b = dot ( lms, float3( +0.0259040371, +0.7827717662, -0.8086757660 ) );
+	return float3(L, a, b);
+}
+
+float3 convertOKLabtoLMS ( float3 c )
+{
+	float3 lms;
+	
+	float l = dot ( c, float3( 1.0, +0.3963377774, +0.2158037573 ) );
+	float m = dot ( c, float3( 1.0, -0.1055613458, -0.0638541728 ) );
+	float s = dot ( c, float3( 1.0, -0.0894841775, -1.2914855480 ) );
+	
+	l = l*l*l;
+	m = m*m*m;
+	s = s*s*s;
+	return float3(l,m,s);
+}
+
+float3 convertOKLabtoOKLCh ( float3 c )
+{
+	float C = sqrt ( (c.g * c.g) + (c.b * c.b) );
+	float h = atan2 ( c.b, c.g );
+	return float3 ( c.r, C, h );
+}
+
+float3 convertOKLChtoOKLab ( float3 c )
+{
+	float a = c.g * cos ( c.b );
+	float b = c.g * sin ( c.b );
+	return float3 ( c.r, a, b );
+
+}
+
+
+
+float3 rgb_to_yuv(float3 c)
+{
+    float y = dot(c, float3(0.2126, 0.7152, 0.0722));
+    float u = (c.b - y);
+    float v = (c.r - y);
+    return float3(y, u, v);
+}
+
+float3 yuv_to_rgb(float3 yuv)
+{
+    float y = yuv.x;
+    float u = yuv.y;
+    float v = yuv.z;
+    float r = y + v;
+    float b = y + u;
+    float g = (y - 0.2126*r - 0.0722*b) / 0.7152;
+    return float3(r,g,b);
+}
+
+float3 mainImageGetPixel ( float2 uv )
+{
+	return image.Sample(textureSampler, uv).rgb;
+}
+
+float3 mainImageGetBlurBox3x3 ( float2 uv )
+{
+	/*float2 px = float2(2.0,2.0) / uv_size;
+	float3 c = float3 ( 0.0, 0.0, 0.0 );
+
+	c += mainImageGetPixel ( uv + px * float2 ( -1.0, -1.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  0.0, -1.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  1.0, -1.0 ) );
+
+	c += mainImageGetPixel ( uv + px * float2 ( -1.0,  0.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  0.0,  0.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  1.0,  0.0 ) );
+
+	c += mainImageGetPixel ( uv + px * float2 ( -1.0,  1.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  0.0,  1.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  1.0,  1.0 ) );
+	
+	//c = c * 0.3;
+	c = clamp(c, 0.0, 1.0);
+	*/
+	
+	float3 c = mainImageGetBlurBox5x5 ( uv );
+	c = c * 10;
+	c = clamp(c, 0.0, 1.0);
+	
+	return c;
+}
+
+float3 mainImageGetBlurBox5x5 ( float2 uv )
+{
+	float2 px = float2(2.0,2.0) / uv_size; //float2 ( 1.0, 1.0 );
+	float3 c = float3 ( 0.0, 0.0, 0.0 );
+	
+	c += mainImageGetPixel ( uv + px * float2 ( -2.0, -2.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 ( -1.0, -2.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  0.0, -2.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  1.0, -2.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  2.0, -2.0 ) );
+
+	c += mainImageGetPixel ( uv + px * float2 ( -2.0, -1.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 ( -1.0, -1.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  0.0, -1.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  1.0, -1.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  2.0, -1.0 ) );
+
+	c += mainImageGetPixel ( uv + px * float2 ( -2.0,  0.0 ) );	
+	c += mainImageGetPixel ( uv + px * float2 ( -1.0,  0.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  0.0,  0.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  1.0,  0.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  2.0,  0.0 ) );
+
+	c += mainImageGetPixel ( uv + px * float2 ( -2.0,  1.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 ( -1.0,  1.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  0.0,  1.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  1.0,  1.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  2.0,  1.0 ) );
+	
+	c += mainImageGetPixel ( uv + px * float2 ( -2.0,  2.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 ( -1.0,  2.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  0.0,  2.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  1.0,  2.0 ) );
+	c += mainImageGetPixel ( uv + px * float2 (  2.0,  2.0 ) );
+	
+	return c * (1.0 / 25.0);
+
+}
+
+/*
+	Super quantification
+*/
+float3 mainImageGetSuperQuantification ( float2 uv )
+{
+	float2 px = float2 ( 2.0, 2.0 ) / uv_size;
+	float3 oPixel0, oPixel1, oPixel2, oPixel3, oPixel4;
+	float3 oPixelW;
+	float3 oPixelH;
+	float3 oPixelD;
+	float3 oPixelC;
+	float3 oDeltaA;
+	float3 oDeltaB;
+	float3 oDeltaU;
+	float3 oDeltaV;
+	
+	//Get width
+	oPixel0 = mainImageGetPixel ( uv + px * float2 ( -2.0,  0.0 ) );
+	oPixel1 = mainImageGetPixel ( uv + px * float2 ( -1.0,  0.0 ) );
+	oPixel2 = mainImageGetPixel ( uv + px * float2 (  0.0,  0.0 ) );
+	oPixel3 = mainImageGetPixel ( uv + px * float2 (  1.0,  0.0 ) );
+	oPixel4 = mainImageGetPixel ( uv + px * float2 (  2.0,  0.0 ) );
+	
+	//Process RGB-width
+	oDeltaA = abs ( oPixel0 - oPixel1 ) * 255;
+	oDeltaB = abs ( oPixel3 - oPixel4 ) * 255;
+	oDeltaU = abs ( oPixel2 - oPixel1 ) * 255;
+	oDeltaV = abs ( oPixel2 - oPixel3 ) * 255;
+
+	//Clipping block
+	if (oPixel2.r>=1.0) oDeltaA.r = 255;
+	if (oPixel2.g>=1.0) oDeltaA.g = 255;
+	if (oPixel2.b>=1.0) oDeltaA.b = 255;
+	
+	//Process red-width
+	if ( (oDeltaA.r<=1) && (oDeltaB.r<=1) )
+	{
+		if ( (oDeltaU.r<=1) && (oDeltaV.r<=1) )
+		{
+			oPixelW.r = ( (2.0 * oPixel2.r) + oPixel1.r + oPixel3.r ) * 0.25;
+		}
+	}
+	else if ( (oDeltaA.r<=2) && (oDeltaB.r<=2) )
+	{
+		if ( (oDeltaU.r<=2) && (oDeltaV.r<=2) )
+		{
+			oPixelW.r = ( (6.0 * oPixel2.r) + oPixel1.r + oPixel3.r ) * 0.125;
+		}
+	}
+	else oPixelW.r = oPixel2.r;
+	
+	//Process green-width
+	if ( (oDeltaA.g<=1) && (oDeltaB.g<=1) )
+	{
+		if ( (oDeltaU.g<=1) && (oDeltaV.g<=1) )
+		{
+			oPixelW.g = ( (2.0 * oPixel2.g) + oPixel1.g + oPixel3.g ) * 0.25;
+		}
+	}
+	else if ( (oDeltaA.g<=2) && (oDeltaB.g<=2) )
+	{
+		if ( (oDeltaU.g<=2) && (oDeltaV.g<=2) )
+		{
+			oPixelW.g = ( (6.0 * oPixel2.g) + oPixel1.g + oPixel3.g ) * 0.125;
+		}
+	}
+	else oPixelW.g = oPixel2.g;
+	
+	//Process blue-width
+	if ( (oDeltaA.b<=1) && (oDeltaB.b<=1) )
+	{
+		if ( (oDeltaU.b<=1) && (oDeltaV.b<=1) )
+		{
+			oPixelW.b = ( (2.0 * oPixel2.b) + oPixel1.b + oPixel3.b ) * 0.25;
+		}
+	}
+	else if ( (oDeltaA.b<=2) && (oDeltaB.b<=2) )
+	{
+		if ( (oDeltaU.b<=2) && (oDeltaV.b<=2) )
+		{
+			oPixelW.b = ( (6.0 * oPixel2.b) + oPixel1.g + oPixel3.b ) * 0.125;
+		}
+	}
+	else oPixelW.b = oPixel2.b;
+	
+	//Get height
+	oPixel0 = mainImageGetPixel ( uv + px * float2 (  0.0, -2.0 ) );
+	oPixel1 = mainImageGetPixel ( uv + px * float2 (  0.0, -1.0 ) );
+	oPixel2 = mainImageGetPixel ( uv + px * float2 (  0.0,  0.0 ) );
+	oPixel3 = mainImageGetPixel ( uv + px * float2 (  0.0,  1.0 ) );
+	oPixel4 = mainImageGetPixel ( uv + px * float2 (  0.0,  2.0 ) );
+	
+	//Process RGB-height
+	oDeltaA = abs ( oPixel0 - oPixel1 ) * 255;
+	oDeltaB = abs ( oPixel3 - oPixel4 ) * 255;
+	oDeltaU = abs ( oPixel2 - oPixel1 ) * 255;
+	oDeltaV = abs ( oPixel2 - oPixel3 ) * 255;
+	
+	//Clipping block
+	if (oPixel2.r>=1.0) oDeltaA.r = 255;
+	if (oPixel2.g>=1.0) oDeltaA.g = 255;
+	if (oPixel2.b>=1.0) oDeltaA.b = 255;
+	
+	//Process red-height
+	if ( (oDeltaA.r<=1) && (oDeltaB.r<=1) )
+	{
+		if ( (oDeltaU.r<=1) && (oDeltaV.r<=1) )
+		{
+			oPixelH.r = ( (2.0 * oPixel2.r) + oPixel1.r + oPixel3.r ) * 0.25;
+		}
+	}
+	else if ( (oDeltaA.r<=2) && (oDeltaB.r<=2) )
+	{
+		if ( (oDeltaU.r<=2) && (oDeltaV.r<=2) )
+		{
+			oPixelH.r = ( (6.0 * oPixel2.r) + oPixel1.r + oPixel3.r ) * 0.125;
+		}
+	}
+	else oPixelH.r = oPixel2.r;
+	
+	//Process green-height
+	if ( (oDeltaA.g<=1) && (oDeltaB.g<=1) )
+	{
+		if ( (oDeltaU.g<=1) && (oDeltaV.g<=1) )
+		{
+			oPixelH.g = ( (2.0 * oPixel2.g) + oPixel1.g + oPixel3.g ) * 0.25;
+		}
+	}
+	else if ( (oDeltaA.g<=2) && (oDeltaB.g<=2) )
+	{
+		if ( (oDeltaU.g<=2) && (oDeltaV.g<=2) )
+		{
+			oPixelH.g = ( (6.0 * oPixel2.g) + oPixel1.g + oPixel3.g ) * 0.125;
+		}
+	}
+	else oPixelH.g = oPixel2.g;
+	
+	//Process blue-height
+	if ( (oDeltaA.b<=1) && (oDeltaB.b<=1) )
+	{
+		if ( (oDeltaU.b<=1) && (oDeltaV.b<=1) )
+		{
+			oPixelH.b = ( (2.0 * oPixel2.b) + oPixel1.b + oPixel3.b ) * 0.25;
+		}
+	}
+	else if ( (oDeltaA.b<=2) && (oDeltaB.b<=2) )
+	{
+		if ( (oDeltaU.b<=2) && (oDeltaV.b<=2) )
+		{
+			oPixelH.b = ( (6.0 * oPixel2.b) + oPixel1.g + oPixel3.b ) * 0.125;
+		}
+	}
+	else oPixelH.b = oPixel2.b;	
+	
+	//Get cross-C
+	oPixel0 = mainImageGetPixel ( uv + px * float2 ( -2.0, -2.0 ) );
+	oPixel1 = mainImageGetPixel ( uv + px * float2 ( -1.0, -1.0 ) );
+	oPixel2 = mainImageGetPixel ( uv + px * float2 (  0.0,  0.0 ) );
+	oPixel3 = mainImageGetPixel ( uv + px * float2 (  1.0,  1.0 ) );
+	oPixel4 = mainImageGetPixel ( uv + px * float2 (  2.0,  2.0 ) );
+	
+	//Process RGB-cross-C
+	oDeltaA = abs ( oPixel0 - oPixel1 ) * 255;
+	oDeltaB = abs ( oPixel3 - oPixel4 ) * 255;
+	oDeltaU = abs ( oPixel2 - oPixel1 ) * 255;
+	oDeltaV = abs ( oPixel2 - oPixel3 ) * 255;
+	
+	//Clipping block
+	if (oPixel2.r>=1.0) oDeltaA.r = 255;
+	if (oPixel2.g>=1.0) oDeltaA.g = 255;
+	if (oPixel2.b>=1.0) oDeltaA.b = 255;
+	
+	//Process red-cross-C
+	if ( (oDeltaA.r<=1) && (oDeltaB.r<=1) )
+	{
+		if ( (oDeltaU.r<=1) && (oDeltaV.r<=1) )
+		{
+			oPixelC.r = ( (2.0 * oPixel2.r) + oPixel1.r + oPixel3.r ) * 0.25;
+		}
+	}
+	else if ( (oDeltaA.r<=2) && (oDeltaB.r<=2) )
+	{
+		if ( (oDeltaU.r<=2) && (oDeltaV.r<=2) )
+		{
+			oPixelC.r = ( (6.0 * oPixel2.r) + oPixel1.r + oPixel3.r ) * 0.125;
+		}
+	}
+	else oPixelC.r = oPixel2.r;
+	
+	//Process green-cross-C
+	if ( (oDeltaA.g<=1) && (oDeltaB.g<=1) )
+	{
+		if ( (oDeltaU.g<=1) && (oDeltaV.g<=1) )
+		{
+			oPixelC.g = ( (2.0 * oPixel2.g) + oPixel1.g + oPixel3.g ) * 0.25;
+		}
+	}
+	else if ( (oDeltaA.g<=2) && (oDeltaB.g<=2) )
+	{
+		if ( (oDeltaU.g<=2) && (oDeltaV.g<=2) )
+		{
+			oPixelC.g = ( (6.0 * oPixel2.g) + oPixel1.g + oPixel3.g ) * 0.125;
+		}
+	}
+	else oPixelC.g = oPixel2.g;
+	
+	//Process blue-cross-C
+	if ( (oDeltaA.b<=1) && (oDeltaB.b<=1) )
+	{
+		if ( (oDeltaU.b<=1) && (oDeltaV.b<=1) )
+		{
+			oPixelC.b = ( (2.0 * oPixel2.b) + oPixel1.b + oPixel3.b ) * 0.25;
+		}
+	}
+	else if ( (oDeltaA.b<=2) && (oDeltaB.b<=2) )
+	{
+		if ( (oDeltaU.b<=2) && (oDeltaV.b<=2) )
+		{
+			oPixelC.b = ( (6.0 * oPixel2.b) + oPixel1.g + oPixel3.b ) * 0.125;
+		}
+	}
+	else oPixelC.b = oPixel2.b;	
+	
+	//Get cross-D
+	oPixel0 = mainImageGetPixel ( uv + px * float2 ( -2.0,  2.0 ) );
+	oPixel1 = mainImageGetPixel ( uv + px * float2 ( -1.0,  1.0 ) );
+	oPixel2 = mainImageGetPixel ( uv + px * float2 (  0.0,  0.0 ) );
+	oPixel3 = mainImageGetPixel ( uv + px * float2 (  1.0, -1.0 ) );
+	oPixel4 = mainImageGetPixel ( uv + px * float2 (  2.0, -2.0 ) );
+	
+	//Process RGB-cross-D
+	oDeltaA = abs ( oPixel0 - oPixel1 ) * 255;
+	oDeltaB = abs ( oPixel3 - oPixel4 ) * 255;
+	oDeltaU = abs ( oPixel2 - oPixel1 ) * 255;
+	oDeltaV = abs ( oPixel2 - oPixel3 ) * 255;
+	
+	//Clipping block
+	if (oPixel2.r>=1.0) oDeltaA.r = 255;
+	if (oPixel2.g>=1.0) oDeltaA.g = 255;
+	if (oPixel2.b>=1.0) oDeltaA.b = 255;
+	
+	//Process red-cross-D
+	if ( (oDeltaA.r<=1) && (oDeltaB.r<=1) )
+	{
+		if ( (oDeltaU.r<=1) && (oDeltaV.r<=1) )
+		{
+			oPixelD.r = ( (2.0 * oPixel2.r) + oPixel1.r + oPixel3.r ) * 0.25;
+		}
+	}
+	else if ( (oDeltaA.r<=2) && (oDeltaB.r<=2) )
+	{
+		if ( (oDeltaU.r<=2) && (oDeltaV.r<=2) )
+		{
+			oPixelD.r = ( (6.0 * oPixel2.r) + oPixel1.r + oPixel3.r ) * 0.125;
+		}
+	}
+	else oPixelD.r = oPixel2.r;
+	
+	//Process green-cross-D
+	if ( (oDeltaA.g<=1) && (oDeltaB.g<=1) )
+	{
+		if ( (oDeltaU.g<=1) && (oDeltaV.g<=1) )
+		{
+			oPixelD.g = ( (2.0 * oPixel2.g) + oPixel1.g + oPixel3.g ) * 0.25;
+		}
+	}
+	else if ( (oDeltaA.g<=2) && (oDeltaB.g<=2) )
+	{
+		if ( (oDeltaU.g<=2) && (oDeltaV.g<=2) )
+		{
+			oPixelD.g = ( (6.0 * oPixel2.g) + oPixel1.g + oPixel3.g ) * 0.125;
+		}
+	}
+	else oPixelD.g = oPixel2.g;
+	
+	//Process blue-cross-D
+	if ( (oDeltaA.b<=1) && (oDeltaB.b<=1) )
+	{
+		if ( (oDeltaU.b<=1) && (oDeltaV.b<=1) )
+		{
+			oPixelD.b = ( (2.0 * oPixel2.b) + oPixel1.b + oPixel3.b ) * 0.25;
+		}
+	}
+	else if ( (oDeltaA.b<=2) && (oDeltaB.b<=2) )
+	{
+		if ( (oDeltaU.b<=2) && (oDeltaV.b<=2) )
+		{
+			oPixelD.b = ( (6.0 * oPixel2.b) + oPixel1.g + oPixel3.b ) * 0.125;
+		}
+	}
+	else oPixelD.b = oPixel2.b;	
+	
+	
+	return ( oPixelW + oPixelH + oPixelC + oPixelD ) * 0.25;
+	
+}
+
+float4 mainImage(vertData v_in) : TARGET
+{
+	float 			fRandomValue;
+	float4 			oPixel4;
+	float 			fNoiseN1;
+	float 			fNoiseN0;
+	float			fNoiseHF;
+	float			fNoiseLF;
+	float2 			fPosition2;
+	float 			fFrameN1;
+	float 			fFrameN0;
+	float			fFrame;
+	
+	float3			oPixel3;
+	float3			oPixelBlur3;
+	float3			oPixelGlow3;
+	
+	
+	
+
+	//Get 1 pixel
+	oPixel4 		= 	image.Sample(textureSampler, v_in.uv );
+	oPixel3	= oPixel4.rgb;
+	
+	//Quantification processing
+	if (iQuantification==2)
+	{
+		float3 oPixel3Quantification	= mainImageGetSuperQuantification ( v_in.uv );
+		if ( (oPixel3Quantification.r!=oPixel3.r) ||
+			 (oPixel3Quantification.g!=oPixel3.g) ||
+			 (oPixel3Quantification.b!=oPixel3.b) )
+			oPixel3 = float3 ( 1.0, 1.0, 1.0 );
+	}
+	else if (iQuantification==1)
+	{
+		oPixel3			=	mainImageGetSuperQuantification ( v_in.uv );
+	}
+
+	//Clipping compensation
+	oPixel3			=   clippingCompensation ( oPixel3 );
+	
+	//Get 1 blured pixel
+	oPixelBlur3		=	mainImageGetBlurBox5x5 ( v_in.uv );
+	
+	//Get 1 blured pixel for glow
+	oPixelGlow3		=	mainImageGetBlurBox3x3 ( v_in.uv );
+	
+	
+	//Convert RGB to OKLCh
+	oPixel3			= 	convertRGBtoLMS ( oPixel3 );
+	oPixel3			=   convertLMStoOKLab ( oPixel3 );
+	oPixel3			=   convertOKLabtoOKLCh ( oPixel3 );
+	
+	oPixelBlur3		= 	convertRGBtoLMS ( oPixelBlur3 );
+	oPixelBlur3		=   convertLMStoOKLab ( oPixelBlur3 );
+	oPixelBlur3		=   convertOKLabtoOKLCh ( oPixelBlur3 );
+
+	oPixelGlow3		= 	convertRGBtoLMS ( oPixelGlow3 );
+	oPixelGlow3		=   convertLMStoOKLab ( oPixelGlow3 );
+	oPixelGlow3		=   convertOKLabtoOKLCh ( oPixelGlow3 );
+	
+	
+	float fPixel_L 	= 	oPixel3.r;
+	float fPixel_C 	= 	oPixel3.g;
+	float fPixel_h 	= 	oPixel3.b;
+
+	float fPixelBlur_L 	= 	oPixelBlur3.r;
+	float fPixelBlur_C 	= 	oPixelBlur3.g;
+	float fPixelBlur_h 	= 	oPixelBlur3.b;
+	
+	float fPixelGlow_L 	= 	oPixelGlow3.r;
+	float fPixelGlow_C 	= 	oPixelGlow3.g;
+	float fPixelGlow_h 	= 	oPixelGlow3.b;
+	
+	//sk is desaturation ratio (0.0 = min, 1.0 = max)
+	float sk		=   fIntensity;	
+	
+	float fTemp;
+	
+	fTemp			= 	1.0 - (fPixelBlur_L*sk);
+	
+	
+	
+	//Brutal skintone detection
+
+	float fSkinTone_C_lo2;
+	float fSkinTone_C_hi2;
+	float fSkinTone_C_mlo;
+	float fSkinTone_C_mhi;
+	
+	float fSkinTone_h_lo2;
+	float fSkinTone_h_hi2;
+	float fSkinTone_h_mlo;
+	float fSkinTone_h_mhi;
+	
+	float fAlpha_C;
+	float fAlpha_h;
+	float fSkinAlpha;
+	
+	fSkinTone_C_lo2 = fSkinTone_C_lo - fSkinTone_C_margin;
+	fSkinTone_C_hi2 = fSkinTone_C_hi + fSkinTone_C_margin;
+	fSkinTone_C_lo2 = clamp ( fSkinTone_C_lo2, 0.0, 1.0 );
+	
+	fSkinTone_C_mlo = 1.0 / ( fSkinTone_C_lo - fSkinTone_C_lo2 );
+	fSkinTone_C_mhi = 1.0 / ( fSkinTone_C_hi2 - fSkinTone_C_hi );
+	
+	fSkinTone_h_lo2 = fSkinTone_h_lo - fSkinTone_h_margin;
+	fSkinTone_h_hi2 = fSkinTone_h_hi + fSkinTone_h_margin;
+	fSkinTone_h_mlo = 1.0 / ( fSkinTone_h_lo - fSkinTone_h_lo2 );
+	fSkinTone_h_mhi = 1.0 / ( fSkinTone_h_hi2 - fSkinTone_h_hi );
+	
+
+
+
+	
+	if ((fPixelBlur_C>=fSkinTone_C_lo) && (fPixelBlur_C<=fSkinTone_C_hi))
+	{
+		fAlpha_C = 1.0;
+	}
+	else if ( (fPixelBlur_C>fSkinTone_C_lo2) && (fPixelBlur_C<fSkinTone_C_lo) )
+	{
+		fAlpha_C = (fPixelBlur_C - fSkinTone_C_lo2) * fSkinTone_C_mlo;
+	}
+	else if ( (fPixelBlur_C>fSkinTone_C_hi) && (fPixelBlur_C<fSkinTone_C_hi2) )
+	{
+		fAlpha_C = 1.0 - ( (fPixelBlur_C - fSkinTone_C_hi) * fSkinTone_C_mhi );
+	}
+	else
+	{
+		fAlpha_C = 0.0;
+	}
+
+	if ((fPixelBlur_h>=fSkinTone_h_lo) && (fPixelBlur_h<=fSkinTone_h_hi))
+	{
+		fAlpha_h = 1.0;
+	}
+	else if ( (fPixelBlur_h>fSkinTone_h_lo2) && (fPixelBlur_h<fSkinTone_h_lo) )
+	{
+		fAlpha_h = (fPixelBlur_h - fSkinTone_h_lo2) * fSkinTone_h_mlo;
+	}
+	else if ( (fPixelBlur_h>fSkinTone_h_hi) && (fPixelBlur_h<fSkinTone_h_hi2) )
+	{
+		fAlpha_h = 1.0 - ( (fPixelBlur_h - fSkinTone_h_hi) * fSkinTone_h_mhi );
+	}
+	else
+	{
+		fAlpha_h = 0.0;
+	}
+	
+	//fSkinAlpha = fAlpha_h * 1.50 * fAlpha_C;
+	//fSkinAlpha = (fSkinAlpha * fSkinAlpha) * 0.5;
+	
+	
+	
+	fSkinAlpha = fAlpha_C*fAlpha_h;
+	
+	
+	fSkinAlpha = clamp ( fSkinAlpha, 0.0, 1.0 );
+	
+	
+	
+	
+	if (iSkinDetection==1)
+	{
+		fPixel_L		=   fSkinAlpha;
+		fPixel_C 		=   0.0;
+		fPixel_h		=	0.0;
+	}
+	else
+	{
+		float fSkinA_L = 0.96;
+		float fSkinA_C = 0.02;
+		float fSkinA_h = 1.60;
+		
+		fSkinA_L = 0.735;
+		fSkinA_C = 0.055;
+		fSkinA_h = 0.92;
+		
+
+		float fSkinB_L = 0.95;
+		float fSkinB_C = 0.03;
+		float fSkinB_h = 1.50;
+		
+		float fSkinMin_C;
+		
+		fSkinMin_C = (fPixel_C + fSkinA_C + fSkinB_C) * 0.2;
+		
+		//fSkinAlpha *= 0.1;
+		
+		//fPixel_L = lerp ( fPixel_L, fSkin_L, fSkinAlpha );
+		fPixel_C = lerp ( fPixel_C, fSkinMin_C, fSkinAlpha * fIntensity );
+		//fPixel_h = lerp ( fPixel_h, fSkinA_h, fSkinAlpha * 0.3 );
+		
+		fPixel_h = lerp ( fPixel_h, 0.82, fSkinAlpha * fIntensity * 0.2 );
+	
+	
+		
+		
+		//Film processing
+		fTemp = pow ( fPixelBlur_L, 6 );
+		fPixel_C = lerp ( fPixel_C, fPixel_C*(1.0-fLumSat), fTemp );
+	}
+	 
+	
+	
+	
+/*
+	if ( (fPixelBlur_h>0.20) && (fPixelBlur_h<1.60) && (fPixelBlur_C > 0.02) && (fPixelBlur_C < 0.16) )
+	{
+		//fPixel_L		=   0.0;
+		fPixel_C 		=   fPixel_C * fTemp;
+		//fPixel_L = fPixel_L * 1.5;
+	}
+	else
+	{
+		fTemp			=   (fPixelBlur_L*fPixelBlur_L*fPixelBlur_L*fPixelBlur_L) * 0.1;
+		fTemp			= 	1.0 - fTemp;
+		fPixel_C		= 	fPixel_C * fTemp;
+	}
+*/	
+	
+	oPixel3.r		= 	fPixel_L;
+	oPixel3.g		= 	fPixel_C;
+	oPixel3.b		= 	fPixel_h;
+	
+	
+	
+	oPixel3			=   convertOKLChtoOKLab ( oPixel3 );
+	oPixel3			=   convertOKLabtoLMS ( oPixel3 );
+	oPixel3			=	convertLMStoRGB ( oPixel3 );
+	
+	
+	
+	//oPixel4.rgb 	= 	0.5 + fNoiseLF * 0.25 + fNoiseHF * 0.5;
+	oPixel4.rgb		=	oPixel3;
+	oPixel4.a 		= 	1.0;
+	
+	
+	
+    return saturate(oPixel4);
+}
+
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader  = mainImage(v_in);
+	}
+}
