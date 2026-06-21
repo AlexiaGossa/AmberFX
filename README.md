@@ -13,3 +13,8 @@ Internal processing
 - Gamma correction (Gamma 2.0 or G4C)
 - Skin saturation control
 - Film saturation control
+
+
+Re-quantization
+- SNR improved from 1.99 to 2.22dB (+0.33 bits to +0.37 bits) on synthetic test patterns.
+- SNR improved from 1.76dB (+0.29 bits) on a corpus of 8-bit images reduced to 6 bits.
