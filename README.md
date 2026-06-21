@@ -6,3 +6,10 @@ It was developed using the Sony IMX585 sensor, but it should be compatible with 
 
 Work-in-progress !
 The filter is not optimized but runs perfect.
+
+Internal processing
+- Re-quantization
+- De-clipping correction
+- Gamma correction (Gamma 2.0 or G4C)
+- Skin saturation control
+- Film saturation control
