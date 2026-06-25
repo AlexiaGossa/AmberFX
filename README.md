@@ -16,5 +16,5 @@ Internal processing
 
 
 Re-quantization
-- SNR improved from 1.99 to 2.22dB (+0.33 bits to +0.37 bits) on synthetic test patterns.
-- SNR improved from 1.76dB (+0.29 bits) on a corpus of 8-bit images reduced to 6 bits.
+- SNR improved from 4.46dB or 0.7bit on synthetic test patterns.
+- SNR improved from 3.64dB or +0.6bit on real pictures.
