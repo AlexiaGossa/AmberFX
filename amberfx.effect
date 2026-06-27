@@ -6,6 +6,9 @@
 	
 	https://github.com/AlexiaGossa/AmberFX
 	
+	2026-06-27 Alexia Gossa
+	- Add RGB and YCbCr ReQuantification processing and checker
+	- Add ReQuantification noise threshold
 	
 	2026-06-26 Alexia Gossa
 	- Update quantization enhancement :
@@ -46,11 +49,32 @@ uniform int iQuantification<
 	int    option_0_value 	= 0;
 	string option_0_label 	= "Normal";
 	int    option_1_value 	= 1;
-	string option_1_label 	= "Advanced";
+	string option_1_label 	= "RGB ReQuantifier";
 	int    option_2_value 	= 2;
-	string option_2_label 	= "Checker";
+	string option_2_label 	= "YCbCr ReQuantifier";
+	int    option_3_value 	= 3;
+	string option_3_label 	= "Check RGB ReQuant";
+	int    option_4_value 	= 4;
+	string option_4_label 	= "Check YCbCr ReQuant";
 > = 0;
 
+uniform int iQuantificationLevel<
+	string label 			= "ReQuant noise threshold";
+	string widget_type 		= "select";
+	int    option_0_value 	= 0;
+	string option_0_label 	= "Minimal";
+	int    option_1_value 	= 1;
+	string option_1_label 	= "Low";
+	int    option_2_value 	= 2;
+	string option_2_label 	= "Medium";
+	int    option_3_value 	= 4;
+	string option_3_label 	= "High";
+	int    option_4_value 	= 12;
+	string option_4_label 	= "Very high + Denoise";
+	int    option_5_value 	= 36;
+	string option_5_label 	= "Absurd + Denoise";
+
+> = 0;
 
 uniform int iDynamicRange<
 	string label 			= "Dynamic Range";
@@ -317,56 +341,60 @@ float3 convertOKLChtoOKLab ( float3 c )
 
 
 
-float3 rgb_to_yuv(float3 c)
+float3 RGB_to_YCbCr(float3 c)
 {
-    float y = dot(c, float3(0.2126, 0.7152, 0.0722));
-    float u = (c.b - y);
-    float v = (c.r - y);
-    return float3(y, u, v);
+    float r =       dot(c, float3(  0.299000,  0.587000,  0.114000 ));
+    float g = 0.5 + dot(c, float3( -0.168736, -0.331264,  0.500000 ));
+    float b = 0.5 + dot(c, float3(  0.500000, -0.418688, -0.081312 ));
+    return float3(r, g, b);
 }
 
-float3 yuv_to_rgb(float3 yuv)
+float3 YCbCr_to_RGB(float3 c)
 {
-    float y = yuv.x;
-    float u = yuv.y;
-    float v = yuv.z;
-    float r = y + v;
-    float b = y + u;
-    float g = (y - 0.2126*r - 0.0722*b) / 0.7152;
-    return float3(r,g,b);
+	float3 fTemp3 = c + float3(0,-0.5,-0.5);
+    float r = dot(fTemp3, float3( 1.0,  0.000000,  1.402000 ));
+    float g = dot(fTemp3, float3( 1.0, -0.344136, -0.714136 ));
+    float b = dot(fTemp3, float3( 1.0,  1.772000,  0.000000 ));
+	return float3(r, g, b);
 }
 
 float3 mainImageGetPixel ( float2 uv )
 {
-	return image.Sample(textureSampler, uv).rgb;
+
+
+	if (iQuantification>=3)
+	{
+		float3 oPixel = rgb_to_yuv(image.Sample(textureSampler, uv).rgb);
+		oPixel = oPixel * 16;
+		oPixel = floor ( oPixel + 0.5 );
+		return oPixel * (1.0/16.0);
+	}
+	else
+	{
+		return rgb_to_yuv(image.Sample(textureSampler, uv).rgb);
+		//return image.Sample(textureSampler, uv).rgb;
+	}
+	
 }
 
-float3 mainImageGetBlurBox3x3 ( float2 uv )
+float3 mainImageGetPixelRGB ( float2 uv )
 {
-	/*float2 px = float2(2.0,2.0) / uv_size;
-	float3 c = float3 ( 0.0, 0.0, 0.0 );
+	return image.Sample(textureSampler, uv).rgb;
+	/*
 
-	c += mainImageGetPixel ( uv + px * float2 ( -1.0, -1.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  0.0, -1.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  1.0, -1.0 ) );
+	float3 oPixel;
+	
+	oPixel = image.Sample(textureSampler, uv).rgb;;
+	oPixel = oPixel * 16;
+	oPixel = floor ( oPixel + 0.5 );
+	return oPixel * (1.0/256.0);
+	//return image.Sample(textureSampler, uv).rgb;
+	*/	
+}
 
-	c += mainImageGetPixel ( uv + px * float2 ( -1.0,  0.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  0.0,  0.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  1.0,  0.0 ) );
-
-	c += mainImageGetPixel ( uv + px * float2 ( -1.0,  1.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  0.0,  1.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  1.0,  1.0 ) );
-	
-	//c = c * 0.3;
-	c = clamp(c, 0.0, 1.0);
-	*/
-	
-	float3 c = mainImageGetBlurBox5x5 ( uv );
-	c = c * 10;
-	c = clamp(c, 0.0, 1.0);
-	
-	return c;
+float3 mainImageGetPixelYCbCr ( float2 uv )
+{
+	return RGB_to_YCbCr ( image.Sample(textureSampler, uv).rgb );
 }
 
 float3 mainImageGetBlurBox5x5 ( float2 uv )
@@ -374,35 +402,35 @@ float3 mainImageGetBlurBox5x5 ( float2 uv )
 	float2 px = float2(2.0,2.0) / uv_size; //float2 ( 1.0, 1.0 );
 	float3 c = float3 ( 0.0, 0.0, 0.0 );
 	
-	c += mainImageGetPixel ( uv + px * float2 ( -2.0, -2.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 ( -1.0, -2.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  0.0, -2.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  1.0, -2.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  2.0, -2.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -2.0, -2.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -1.0, -2.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 (  0.0, -2.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 (  1.0, -2.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 (  2.0, -2.0 ) );
 
-	c += mainImageGetPixel ( uv + px * float2 ( -2.0, -1.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 ( -1.0, -1.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  0.0, -1.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  1.0, -1.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  2.0, -1.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -2.0, -1.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -1.0, -1.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 (  0.0, -1.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 (  1.0, -1.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 (  2.0, -1.0 ) );
 
-	c += mainImageGetPixel ( uv + px * float2 ( -2.0,  0.0 ) );	
-	c += mainImageGetPixel ( uv + px * float2 ( -1.0,  0.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  0.0,  0.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  1.0,  0.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  2.0,  0.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -2.0,  0.0 ) );	
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -1.0,  0.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 (  0.0,  0.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 (  1.0,  0.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 (  2.0,  0.0 ) );
 
-	c += mainImageGetPixel ( uv + px * float2 ( -2.0,  1.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 ( -1.0,  1.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  0.0,  1.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  1.0,  1.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  2.0,  1.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -2.0,  1.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -1.0,  1.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 (  0.0,  1.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 (  1.0,  1.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 (  2.0,  1.0 ) );
 	
-	c += mainImageGetPixel ( uv + px * float2 ( -2.0,  2.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 ( -1.0,  2.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  0.0,  2.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  1.0,  2.0 ) );
-	c += mainImageGetPixel ( uv + px * float2 (  2.0,  2.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -2.0,  2.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -1.0,  2.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 (  0.0,  2.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 (  1.0,  2.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 (  2.0,  2.0 ) );
 	
 	return c * (1.0 / 25.0);
 
@@ -433,42 +461,54 @@ float3 mainImageGetSuperQuantificationGetNewPixel ( float3 oPixel0, float3 oPixe
 {
 	float3 newPixel;
 	float3 oDeltaPixel;
+	float  fMaxLevel1;
+	float  fMaxLevel2;
+	float  fSumLevel1;
+	float  fSumLevel2;
+	float  fSumLevel3;	
+	
+	fMaxLevel1 = iQuantificationLevel + 1.0;
+	fMaxLevel2 = fMaxLevel1 * 2.0;
+	fSumLevel1 = iQuantificationLevel + 1.0;
+	fSumLevel2 = fSumLevel1 * 2.0;
+	fSumLevel3 = fSumLevel1 * 3.0;
+	
 
-	if ((oDeltaMax.r<=1)&&(oDeltaSum.r<=1))
+	if ((oDeltaMax.r<=fMaxLevel1)&&(oDeltaSum.r<=fSumLevel1))
 		newPixel.r = ( oPixel0.r +     oPixel1.r +   oPixel2.r +     oPixel3.r + oPixel4.r ) * 0.2;
-	else if ((oDeltaMax.r<=1)&&(oDeltaSum.r<=2))
+	else if ((oDeltaMax.r<=fMaxLevel1)&&(oDeltaSum.r<=fSumLevel2))
 		newPixel.r = ( oPixel0.r +     oPixel1.r + 2*oPixel2.r +     oPixel3.r + oPixel4.r ) / 6;
-	else if ((oDeltaMax.r<=1)&&(oDeltaSum.r<=3))
+	else if ((oDeltaMax.r<=fMaxLevel1)&&(oDeltaSum.r<=fSumLevel3))
 		newPixel.r = ( oPixel0.r + 1.5*oPixel1.r + 2*oPixel2.r + 1.5*oPixel3.r + oPixel4.r ) / 7;
-	else if ((oDeltaMax.r<=2)&&(oDeltaSum.r<=2))
+	else if ((oDeltaMax.r<=fMaxLevel2)&&(oDeltaSum.r<=fSumLevel2))
 		newPixel.r = ( oPixel0.r + 1.5*oPixel1.r + 2*oPixel2.r + 1.5*oPixel3.r + oPixel4.r ) / 7;
-	else if ((oDeltaMax.r<=2)&&(oDeltaSum.r<=3))
+	else if ((oDeltaMax.r<=fMaxLevel2)&&(oDeltaSum.r<=fSumLevel3))
 		newPixel.r = ( oPixel0.r +   3*oPixel1.r + 8*oPixel2.r +   3*oPixel3.r + oPixel4.r ) * 0.0625;
 	else
 		newPixel.r = oPixel2.r;
 		
-	if ((oDeltaMax.g<=1)&&(oDeltaSum.g<=1))
+	if ((oDeltaMax.g<=fMaxLevel1)&&(oDeltaSum.g<=fSumLevel1))
 		newPixel.g = ( oPixel0.g +     oPixel1.g +   oPixel2.g +     oPixel3.g + oPixel4.g ) * 0.2;
-	else if ((oDeltaMax.g<=1)&&(oDeltaSum.g<=2))
+	else if ((oDeltaMax.g<=fMaxLevel1)&&(oDeltaSum.g<=fSumLevel2))
 		newPixel.g = ( oPixel0.g +     oPixel1.g + 2*oPixel2.g +     oPixel3.g + oPixel4.g ) / 6;
-	else if ((oDeltaMax.g<=1)&&(oDeltaSum.g<=3))
+	else if ((oDeltaMax.g<=fMaxLevel1)&&(oDeltaSum.g<=fSumLevel3))
 		newPixel.g = ( oPixel0.g + 1.5*oPixel1.g + 2*oPixel2.g + 1.5*oPixel3.g + oPixel4.g ) / 7;
-	else if ((oDeltaMax.g<=2)&&(oDeltaSum.g<=2))
+	else if ((oDeltaMax.g<=fMaxLevel2)&&(oDeltaSum.g<=fSumLevel2))
 		newPixel.g = ( oPixel0.g + 1.5*oPixel1.g + 2*oPixel2.g + 1.5*oPixel3.g + oPixel4.g ) / 7;
-	else if ((oDeltaMax.g<=2)&&(oDeltaSum.g<=3))
+	else if ((oDeltaMax.g<=fMaxLevel2)&&(oDeltaSum.g<=fSumLevel3))
 		newPixel.g = ( oPixel0.g +   3*oPixel1.g + 8*oPixel2.g +   3*oPixel3.g + oPixel4.g ) * 0.0625;
 	else
 		newPixel.g = oPixel2.g;
 
-	if ((oDeltaMax.b<=1)&&(oDeltaSum.b<=1))
+	if ((oDeltaMax.b<=fMaxLevel1)&&(oDeltaSum.b<=fSumLevel1))
 		newPixel.b = ( oPixel0.b +     oPixel1.b +   oPixel2.b +     oPixel3.b + oPixel4.b ) * 0.2;
-	else if ((oDeltaMax.b<=1)&&(oDeltaSum.b<=2))
+	else if ((oDeltaMax.b<=fMaxLevel1)&&(oDeltaSum.b<=fSumLevel2))
 		newPixel.b = ( oPixel0.b +     oPixel1.b + 2*oPixel2.b +     oPixel3.b + oPixel4.b ) / 6;
-	else if ((oDeltaMax.b<=1)&&(oDeltaSum.b<=3))
+	else if ((oDeltaMax.b<=fMaxLevel1)&&(oDeltaSum.b<=fSumLevel3))
 		newPixel.b = ( oPixel0.b + 1.5*oPixel1.b + 2*oPixel2.b + 1.5*oPixel3.b + oPixel4.b ) / 7;
-	else if ((oDeltaMax.b<=2)&&(oDeltaSum.b<=2))
+	else if ((oDeltaMax.b<=fMaxLevel2)&&(oDeltaSum.b<=fSumLevel2))
 		newPixel.b = ( oPixel0.b + 1.5*oPixel1.b + 2*oPixel2.b + 1.5*oPixel3.b + oPixel4.b ) / 7;
-	else if ((oDeltaMax.b<=2)&&(oDeltaSum.b<=3))
+	else if ((oDeltaMax.b<=fMaxLevel2)&&(oDeltaSum.b<=fSumLevel3))
 		newPixel.b = ( oPixel0.b +   3*oPixel1.b + 8*oPixel2.b +   3*oPixel3.b + oPixel4.b ) * 0.0625;
 	else
 		newPixel.b = oPixel2.b;
@@ -476,11 +516,11 @@ float3 mainImageGetSuperQuantificationGetNewPixel ( float3 oPixel0, float3 oPixe
 		
 	oDeltaPixel = abs ( newPixel - oPixel2 ) * 255;
 	
-	if (oDeltaPixel.r>0.5)
+	if (oDeltaPixel.r>0.75)
 		newPixel.r = ( newPixel.r + oPixel2.r ) * 0.5;
-	if (oDeltaPixel.g>0.5)
+	if (oDeltaPixel.g>0.75)
 		newPixel.g = ( newPixel.g + oPixel2.g ) * 0.5;
-	if (oDeltaPixel.b>0.5)
+	if (oDeltaPixel.b>0.75)
 		newPixel.b = ( newPixel.b + oPixel2.b ) * 0.5;
 
 		
@@ -524,7 +564,7 @@ float3 mainImageGetSuperQuantificationGetCompensation ( float3 oDeltaSum, float3
 	return ratioCompensation;
 }
 
-float3 mainImageGetSuperQuantification ( float2 uv )
+float3 mainImageGetSuperQuantificationRGB ( float2 uv )
 {
 	float2 px = float2 ( 2.0, 2.0 ) / uv_size;
 	float3 oPixel0, oPixel1, oPixel2, oPixel3, oPixel4;
@@ -546,15 +586,15 @@ float3 mainImageGetSuperQuantification ( float2 uv )
 	
 	
 	// Central pixel
-	oPixel2 = mainImageGetPixel ( uv + px * float2 (  0.0,  0.0 ) );
+	oPixel2 = mainImageGetPixelRGB ( uv + px * float2 (  0.0,  0.0 ) );
 	
 	//
 	//	Horizontal processing
 	//
-	oPixel0 = mainImageGetPixel ( uv + px * float2 ( -2.0,  0.0 ) );
-	oPixel1 = mainImageGetPixel ( uv + px * float2 ( -1.0,  0.0 ) );	
-	oPixel3 = mainImageGetPixel ( uv + px * float2 (  1.0,  0.0 ) );
-	oPixel4 = mainImageGetPixel ( uv + px * float2 (  2.0,  0.0 ) );
+	oPixel0 = mainImageGetPixelRGB ( uv + px * float2 ( -2.0,  0.0 ) );
+	oPixel1 = mainImageGetPixelRGB ( uv + px * float2 ( -1.0,  0.0 ) );	
+	oPixel3 = mainImageGetPixelRGB ( uv + px * float2 (  1.0,  0.0 ) );
+	oPixel4 = mainImageGetPixelRGB ( uv + px * float2 (  2.0,  0.0 ) );
 	oDelta0 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel0, oPixel1 );
 	oDelta1 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel1, oPixel2 );
 	oDelta2 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel2, oPixel3 );
@@ -562,15 +602,15 @@ float3 mainImageGetSuperQuantification ( float2 uv )
 	oDeltaSum = mainImageGetSuperQuantificationGetDeltaSum ( oDelta0, oDelta1, oDelta2, oDelta3 );
 	oDeltaMax = mainImageGetSuperQuantificationGetDeltaMax ( oDelta0, oDelta1, oDelta2, oDelta3 );
 	oPixelH = mainImageGetSuperQuantificationGetNewPixel ( oPixel0, oPixel1, oPixel2, oPixel3, oPixel4, oDeltaSum, oDeltaMax );
-	oCompensationH = mainImageGetSuperQuantificationGetCompensation ( oDeltaSum, oDeltaMax );
+	//oCompensationH = mainImageGetSuperQuantificationGetCompensation ( oDeltaSum, oDeltaMax );
 	
 	//
 	//	Vertical processing
 	//
-	oPixel0 = mainImageGetPixel ( uv + px * float2 (  0.0, -2.0 ) );
-	oPixel1 = mainImageGetPixel ( uv + px * float2 (  0.0, -1.0 ) );
-	oPixel3 = mainImageGetPixel ( uv + px * float2 (  0.0,  1.0 ) );
-	oPixel4 = mainImageGetPixel ( uv + px * float2 (  0.0,  2.0 ) );
+	oPixel0 = mainImageGetPixelRGB ( uv + px * float2 (  0.0, -2.0 ) );
+	oPixel1 = mainImageGetPixelRGB ( uv + px * float2 (  0.0, -1.0 ) );
+	oPixel3 = mainImageGetPixelRGB ( uv + px * float2 (  0.0,  1.0 ) );
+	oPixel4 = mainImageGetPixelRGB ( uv + px * float2 (  0.0,  2.0 ) );
 	oDelta0 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel0, oPixel1 );
 	oDelta1 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel1, oPixel2 );
 	oDelta2 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel2, oPixel3 );
@@ -578,15 +618,15 @@ float3 mainImageGetSuperQuantification ( float2 uv )
 	oDeltaSum = mainImageGetSuperQuantificationGetDeltaSum ( oDelta0, oDelta1, oDelta2, oDelta3 );
 	oDeltaMax = mainImageGetSuperQuantificationGetDeltaMax ( oDelta0, oDelta1, oDelta2, oDelta3 );
 	oPixelV = mainImageGetSuperQuantificationGetNewPixel ( oPixel0, oPixel1, oPixel2, oPixel3, oPixel4, oDeltaSum, oDeltaMax );
-	oCompensationV = mainImageGetSuperQuantificationGetCompensation ( oDeltaSum, oDeltaMax );
+	//oCompensationV = mainImageGetSuperQuantificationGetCompensation ( oDeltaSum, oDeltaMax );
 	
 	//
 	//	Diagonal #1 processing
 	//
-	oPixel0 = mainImageGetPixel ( uv + px * float2 ( -2.0, -2.0 ) );
-	oPixel1 = mainImageGetPixel ( uv + px * float2 ( -1.0, -1.0 ) );
-	oPixel3 = mainImageGetPixel ( uv + px * float2 (  1.0,  1.0 ) );
-	oPixel4 = mainImageGetPixel ( uv + px * float2 (  2.0,  2.0 ) );
+	oPixel0 = mainImageGetPixelRGB ( uv + px * float2 ( -2.0, -2.0 ) );
+	oPixel1 = mainImageGetPixelRGB ( uv + px * float2 ( -1.0, -1.0 ) );
+	oPixel3 = mainImageGetPixelRGB ( uv + px * float2 (  1.0,  1.0 ) );
+	oPixel4 = mainImageGetPixelRGB ( uv + px * float2 (  2.0,  2.0 ) );
 	oDelta0 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel0, oPixel1 );
 	oDelta1 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel1, oPixel2 );
 	oDelta2 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel2, oPixel3 );
@@ -594,15 +634,15 @@ float3 mainImageGetSuperQuantification ( float2 uv )
 	oDeltaSum = mainImageGetSuperQuantificationGetDeltaSum ( oDelta0, oDelta1, oDelta2, oDelta3 );
 	oDeltaMax = mainImageGetSuperQuantificationGetDeltaMax ( oDelta0, oDelta1, oDelta2, oDelta3 );
 	oPixelD1 = mainImageGetSuperQuantificationGetNewPixel ( oPixel0, oPixel1, oPixel2, oPixel3, oPixel4, oDeltaSum, oDeltaMax );
-	oCompensationD1 = mainImageGetSuperQuantificationGetCompensation ( oDeltaSum, oDeltaMax );
+	//oCompensationD1 = mainImageGetSuperQuantificationGetCompensation ( oDeltaSum, oDeltaMax );
 
 	//
 	//	Diagonal #2 processing
 	//
-	oPixel0 = mainImageGetPixel ( uv + px * float2 ( -2.0,  2.0 ) );
-	oPixel1 = mainImageGetPixel ( uv + px * float2 ( -1.0,  1.0 ) );
-	oPixel3 = mainImageGetPixel ( uv + px * float2 (  1.0, -1.0 ) );
-	oPixel4 = mainImageGetPixel ( uv + px * float2 (  2.0, -2.0 ) );
+	oPixel0 = mainImageGetPixelRGB ( uv + px * float2 ( -2.0,  2.0 ) );
+	oPixel1 = mainImageGetPixelRGB ( uv + px * float2 ( -1.0,  1.0 ) );
+	oPixel3 = mainImageGetPixelRGB ( uv + px * float2 (  1.0, -1.0 ) );
+	oPixel4 = mainImageGetPixelRGB ( uv + px * float2 (  2.0, -2.0 ) );
 	oDelta0 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel0, oPixel1 );
 	oDelta1 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel1, oPixel2 );
 	oDelta2 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel2, oPixel3 );
@@ -610,11 +650,114 @@ float3 mainImageGetSuperQuantification ( float2 uv )
 	oDeltaSum = mainImageGetSuperQuantificationGetDeltaSum ( oDelta0, oDelta1, oDelta2, oDelta3 );
 	oDeltaMax = mainImageGetSuperQuantificationGetDeltaMax ( oDelta0, oDelta1, oDelta2, oDelta3 );
 	oPixelD2 = mainImageGetSuperQuantificationGetNewPixel ( oPixel0, oPixel1, oPixel2, oPixel3, oPixel4, oDeltaSum, oDeltaMax );
-	oCompensationD2 = mainImageGetSuperQuantificationGetCompensation ( oDeltaSum, oDeltaMax );
+	//oCompensationD2 = mainImageGetSuperQuantificationGetCompensation ( oDeltaSum, oDeltaMax );
 	
-	oRatioTotal = 1 / (oCompensationH + oCompensationV + oCompensationD1 + oCompensationD2);
+	//oRatioTotal = 1 / (oCompensationH + oCompensationV + oCompensationD1 + oCompensationD2);
+	//return ( oPixelH * oCompensationH + oPixelV * oCompensationV + oPixelD1 * oCompensationD1 + oPixelD2 * oCompensationD2 ) * oRatioTotal;
 	
-	return ( oPixelH * oCompensationH + oPixelV * oCompensationV + oPixelD1 * oCompensationD1 + oPixelD2 * oCompensationD2 ) * oRatioTotal;
+	return ( oPixelH + oPixelV+ oPixelD1 + oPixelD2 ) * 0.25;
+}
+
+float3 mainImageGetSuperQuantificationYCbCr ( float2 uv )
+{
+	float2 px = float2 ( 2.0, 2.0 ) / uv_size;
+	float3 oPixel0, oPixel1, oPixel2, oPixel3, oPixel4;
+	float3 oDelta0, oDelta1, oDelta2, oDelta3;
+	float3 oDeltaSum;
+	float3 oDeltaMax;
+	
+	float3 oPixelH;
+	float3 oPixelV;
+	float3 oPixelD1;
+	float3 oPixelD2;
+
+	float3 oCompensationH;
+	float3 oCompensationV;
+	float3 oCompensationD1;
+	float3 oCompensationD2;
+	
+	float3 oRatioTotal;
+	
+	
+	// Central pixel
+	oPixel2 = mainImageGetPixelYCbCr ( uv + px * float2 (  0.0,  0.0 ) );
+	
+	//
+	//	Horizontal processing
+	//
+	oPixel0 = mainImageGetPixelYCbCr ( uv + px * float2 ( -2.0,  0.0 ) );
+	oPixel1 = mainImageGetPixelYCbCr ( uv + px * float2 ( -1.0,  0.0 ) );	
+	oPixel3 = mainImageGetPixelYCbCr ( uv + px * float2 (  1.0,  0.0 ) );
+	oPixel4 = mainImageGetPixelYCbCr ( uv + px * float2 (  2.0,  0.0 ) );
+	oDelta0 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel0, oPixel1 );
+	oDelta1 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel1, oPixel2 );
+	oDelta2 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel2, oPixel3 );
+	oDelta3 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel3, oPixel4 );
+	oDeltaSum = mainImageGetSuperQuantificationGetDeltaSum ( oDelta0, oDelta1, oDelta2, oDelta3 );
+	oDeltaMax = mainImageGetSuperQuantificationGetDeltaMax ( oDelta0, oDelta1, oDelta2, oDelta3 );
+	oPixelH = mainImageGetSuperQuantificationGetNewPixel ( oPixel0, oPixel1, oPixel2, oPixel3, oPixel4, oDeltaSum, oDeltaMax );
+	//oCompensationH = mainImageGetSuperQuantificationGetCompensation ( oDeltaSum, oDeltaMax );
+	
+	//
+	//	Vertical processing
+	//
+	oPixel0 = mainImageGetPixelYCbCr ( uv + px * float2 (  0.0, -2.0 ) );
+	oPixel1 = mainImageGetPixelYCbCr ( uv + px * float2 (  0.0, -1.0 ) );
+	oPixel3 = mainImageGetPixelYCbCr ( uv + px * float2 (  0.0,  1.0 ) );
+	oPixel4 = mainImageGetPixelYCbCr ( uv + px * float2 (  0.0,  2.0 ) );
+	oDelta0 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel0, oPixel1 );
+	oDelta1 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel1, oPixel2 );
+	oDelta2 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel2, oPixel3 );
+	oDelta3 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel3, oPixel4 );
+	oDeltaSum = mainImageGetSuperQuantificationGetDeltaSum ( oDelta0, oDelta1, oDelta2, oDelta3 );
+	oDeltaMax = mainImageGetSuperQuantificationGetDeltaMax ( oDelta0, oDelta1, oDelta2, oDelta3 );
+	oPixelV = mainImageGetSuperQuantificationGetNewPixel ( oPixel0, oPixel1, oPixel2, oPixel3, oPixel4, oDeltaSum, oDeltaMax );
+	//oCompensationV = mainImageGetSuperQuantificationGetCompensation ( oDeltaSum, oDeltaMax );
+	
+	//
+	//	Diagonal #1 processing
+	//
+	oPixel0 = mainImageGetPixelYCbCr ( uv + px * float2 ( -2.0, -2.0 ) );
+	oPixel1 = mainImageGetPixelYCbCr ( uv + px * float2 ( -1.0, -1.0 ) );
+	oPixel3 = mainImageGetPixelYCbCr ( uv + px * float2 (  1.0,  1.0 ) );
+	oPixel4 = mainImageGetPixelYCbCr ( uv + px * float2 (  2.0,  2.0 ) );
+	oDelta0 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel0, oPixel1 );
+	oDelta1 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel1, oPixel2 );
+	oDelta2 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel2, oPixel3 );
+	oDelta3 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel3, oPixel4 );
+	oDeltaSum = mainImageGetSuperQuantificationGetDeltaSum ( oDelta0, oDelta1, oDelta2, oDelta3 );
+	oDeltaMax = mainImageGetSuperQuantificationGetDeltaMax ( oDelta0, oDelta1, oDelta2, oDelta3 );
+	oPixelD1 = mainImageGetSuperQuantificationGetNewPixel ( oPixel0, oPixel1, oPixel2, oPixel3, oPixel4, oDeltaSum, oDeltaMax );
+	//oCompensationD1 = mainImageGetSuperQuantificationGetCompensation ( oDeltaSum, oDeltaMax );
+
+	//
+	//	Diagonal #2 processing
+	//
+	oPixel0 = mainImageGetPixelYCbCr ( uv + px * float2 ( -2.0,  2.0 ) );
+	oPixel1 = mainImageGetPixelYCbCr ( uv + px * float2 ( -1.0,  1.0 ) );
+	oPixel3 = mainImageGetPixelYCbCr ( uv + px * float2 (  1.0, -1.0 ) );
+	oPixel4 = mainImageGetPixelYCbCr ( uv + px * float2 (  2.0, -2.0 ) );
+	oDelta0 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel0, oPixel1 );
+	oDelta1 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel1, oPixel2 );
+	oDelta2 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel2, oPixel3 );
+	oDelta3 = mainImageGetSuperQuantificationGetDeltaValue ( oPixel3, oPixel4 );
+	oDeltaSum = mainImageGetSuperQuantificationGetDeltaSum ( oDelta0, oDelta1, oDelta2, oDelta3 );
+	oDeltaMax = mainImageGetSuperQuantificationGetDeltaMax ( oDelta0, oDelta1, oDelta2, oDelta3 );
+	oPixelD2 = mainImageGetSuperQuantificationGetNewPixel ( oPixel0, oPixel1, oPixel2, oPixel3, oPixel4, oDeltaSum, oDeltaMax );
+	//oCompensationD2 = mainImageGetSuperQuantificationGetCompensation ( oDeltaSum, oDeltaMax );
+	
+	//oRatioTotal = 1 / (oCompensationH + oCompensationV + oCompensationD1 + oCompensationD2);
+	//return ( oPixelH * oCompensationH + oPixelV * oCompensationV + oPixelD1 * oCompensationD1 + oPixelD2 * oCompensationD2 ) * oRatioTotal;
+	
+	return ( oPixelH + oPixelV+ oPixelD1 + oPixelD2 ) * 0.25;
+}
+
+
+
+
+float3 mainImageGetSuperQuantificationLowRes ( float2 uv )
+{
+
 }
 
 float4 mainImage(vertData v_in) : TARGET
@@ -630,6 +773,33 @@ float4 mainImage(vertData v_in) : TARGET
 	//
 	//	Quantification processing
 	//
+	if (iQuantification==1)
+	{
+		oPixel3			=	mainImageGetSuperQuantificationRGB ( v_in.uv );
+	}
+	else if (iQuantification==2)
+	{
+		oPixel3			=	YCbCr_to_RGB(mainImageGetSuperQuantificationYCbCr ( v_in.uv ));
+	}
+	else if (iQuantification==3)
+	{
+		float3 oNewPixel3;
+		oNewPixel3		=	mainImageGetSuperQuantificationRGB ( v_in.uv );
+		oPixel4.rgb		=	abs(oPixel3-oNewPixel3) * 256;
+		oPixel4.a 		= 	1.0;
+		return saturate(oPixel4);	
+	}
+	else if (iQuantification==4)
+	{
+		float3 oNewPixel3;
+		oNewPixel3		=	YCbCr_to_RGB(mainImageGetSuperQuantificationYCbCr ( v_in.uv ));
+		oPixel4.rgb		=	abs(oPixel3-oNewPixel3) * 256;
+		oPixel4.a 		= 	1.0;
+		return saturate(oPixel4);	
+	}
+	
+	
+	/*	
 	if (iQuantification==2)
 	{
 		float3 oPixel3Quantification	= mainImageGetSuperQuantification ( v_in.uv );
@@ -640,8 +810,33 @@ float4 mainImage(vertData v_in) : TARGET
 	}
 	else if (iQuantification==1)
 	{
-		oPixel3			=	mainImageGetSuperQuantification ( v_in.uv );
+		oPixel3			=	yuv_to_rgb(mainImageGetSuperQuantification ( v_in.uv ));
 	}
+	else if (iQuantification==3)
+	{
+		float3 oNewPixel3;
+		oNewPixel3		=	mainImageGetPixel ( v_in.uv );
+		oNewPixel3 		= 	yuv_to_rgb(oNewPixel3);
+		
+		
+		oPixel4.rgb		=	abs(oPixel3-oNewPixel3) * 8;
+		oPixel4.a 		= 	1.0;
+		return saturate(oPixel4);	
+	}
+	else if (iQuantification==4)
+	{
+		float3 oNewPixel3;
+		//oPixel3			=	mainImageGetPixel ( v_in.uv );
+		oNewPixel3		=	mainImageGetSuperQuantification ( v_in.uv );
+		//oPixel3 		= 	yuv_to_rgb(oPixel3);
+		oNewPixel3 		= 	yuv_to_rgb(oNewPixel3);
+		
+		oPixel4.rgb		=	abs (oPixel3-oNewPixel3) * 8;
+		oPixel4.a 		= 	1.0;
+		return saturate(oPixel4);	
+	}
+	*/
+	
 
 	//
 	//	Clipping compensation
