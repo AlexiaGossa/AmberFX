@@ -6,6 +6,12 @@
 	
 	https://github.com/AlexiaGossa/AmberFX
 	
+	2026-06-29 Alexia Gossa
+	- Refactoring user interface with more efficient settings
+	- Add 2 new blur filters for skin and film processing
+	- Slight improvement on skin processing
+	- Add temperature control on film processing
+	
 	2026-06-27 Alexia Gossa
 	- Add RGB and YCbCr ReQuantification processing and checker
 	- Add ReQuantification noise threshold
@@ -33,6 +39,15 @@ sampler_state textureSampler {
     AddressV 	= Clamp;
 };
 
+uniform int iDynamicRange<
+	string label 			= "Dynamic Range";
+	string widget_type 		= "select";
+	int    option_0_value 	= 0;
+	string option_0_label 	= "Normal 0-255";
+	int    option_1_value 	= 1;
+	string option_1_label 	= "Low 16-240";
+> = 0;
+
 uniform int iGammaType<
 	string label 			= "Gamma";
 	string widget_type 		= "select";
@@ -40,6 +55,50 @@ uniform int iGammaType<
 	string option_0_label 	= "2.0";
 	int    option_1_value 	= 1;
 	string option_1_label 	= "G4C";
+> = 1;
+
+uniform int iGammaLevelG4C<
+    string label 			= "Gamma G4C HiLevel";
+    string widget_type 		= "slider";
+    int minimum 			= 0;
+    int maximum 			= 100;
+    int step 				= 10;
+> = 50;		//91 = original G4C
+
+uniform int iProcessingEnableReQuantifier<
+	string label 			= "ReQuantifier";
+	string widget_type 		= "select";
+	int    option_0_value 	= 0;
+	string option_0_label 	= "Disable";
+	int    option_1_value 	= 1;
+	string option_1_label 	= "Enable";
+> = 1;
+
+uniform int iProcessingEnableDeClipping<
+	string label 			= "DeClipping";
+	string widget_type 		= "select";
+	int    option_0_value 	= 0;
+	string option_0_label 	= "Disable";
+	int    option_1_value 	= 1;
+	string option_1_label 	= "Enable";
+> = 1;
+
+uniform int iProcessingEnableFilm<
+	string label 			= "Film";
+	string widget_type 		= "select";
+	int    option_0_value 	= 0;
+	string option_0_label 	= "Disable";
+	int    option_1_value 	= 1;
+	string option_1_label 	= "Enable";
+> = 1;
+
+uniform int iProcessingEnableSkin<
+	string label 			= "Skin";
+	string widget_type 		= "select";
+	int    option_0_value 	= 0;
+	string option_0_label 	= "Disable";
+	int    option_1_value 	= 1;
+	string option_1_label 	= "Enable";
 > = 1;
 
 
@@ -56,7 +115,7 @@ uniform int iQuantification<
 	string option_3_label 	= "Check RGB ReQuant";
 	int    option_4_value 	= 4;
 	string option_4_label 	= "Check YCbCr ReQuant";
-> = 0;
+> = 2;
 
 uniform int iQuantificationLevel<
 	string label 			= "ReQuant noise threshold";
@@ -74,33 +133,49 @@ uniform int iQuantificationLevel<
 	int    option_5_value 	= 36;
 	string option_5_label 	= "Absurd + Denoise";
 
-> = 0;
+> = 1;
 
-uniform int iDynamicRange<
-	string label 			= "Dynamic Range";
-	string widget_type 		= "select";
-	int    option_0_value 	= 0;
-	string option_0_label 	= "Normal 0-255";
-	int    option_1_value 	= 1;
-	string option_1_label 	= "Low 16-240";
-> = 0;
-
-
-uniform float fLumSat<
+uniform int iLumSat<
     string label 			= "Film lum/sat";
     string widget_type 		= "slider";
-    float minimum 			= 0.0;
-    float maximum 			= 1.0;
-    float step 				= 0.01;
-> = 0.2;
+    int minimum 			= 0;
+    int maximum 			= 100;
+    int step 				= 10;
+> = 60;
 
-uniform float fIntensity<
+uniform int iOverSaturation<
+    string label 			= "Film over saturation";
+    string widget_type 		= "slider";
+    int minimum 			= 0;
+    int maximum 			= 100;
+    int step 				= 10;
+> = 80;
+
+uniform int iFilmTemperature<
+	string label 			= "Film color temp";
+	string widget_type 		= "select";
+	int    option_0_value 	= 0;
+	string option_0_label 	= "Neutral";
+	int    option_1_value 	= 1;
+	string option_1_label 	= "Cold";
+	int    option_2_value 	= 2;
+	string option_2_label 	= "Warm";
+> = 0;
+
+
+uniform int iIntensity<
     string label 			= "Skin Processing";
     string widget_type 		= "slider";
-    float minimum 			= 0.0;
-    float maximum 			= 1.0;
-    float step 				= 0.01;
-> = 0.3;
+    int minimum 			= 0;
+    int maximum 			= 100;
+    int step 				= 5;
+> = 25;
+
+/*
+uniform string notes<
+    string widget_type = "Skin advanced settings";
+> = "add notes here";
+*/
 
 uniform int iSkinDetection<
 	string label 			= "Skin Checker";
@@ -109,7 +184,6 @@ uniform int iSkinDetection<
 	string option_0_label 	= "Normal";
 	int    option_1_value 	= 1;
 	string option_1_label 	= "Show area";
-	
 > = 0;
 
 
@@ -201,14 +275,29 @@ float3 gammaForward_2 ( float3 c )
 }
 
 
-float3 clippingCompensation ( float3 c )
+float3 clippingCompensation ( float3 c, float3 cPixelAreaMax )
 {	
 	float 	fTemp;
+	float 	fArea;
+	float3  fNewColor;
 	fTemp = max ( c.r, c.g );
 	fTemp = max ( c.b, fTemp );
-	if (fTemp>=0.999)
+	
+	fArea = max ( cPixelAreaMax.r, cPixelAreaMax.g );
+	fArea = max ( cPixelAreaMax.b, fArea );
+	
+	
+	if ( (fTemp>=0.998) || (fArea>=0.998) )
 	{
-		c = ( c + fTemp*pow(c,0.707) ) * 0.5;
+		fTemp = max ( fTemp, fArea );
+		
+		fNewColor = float3 ( fTemp, fTemp, fTemp );
+		
+		
+		//c = ( c + fTemp*pow(c,0.5) ) * 0.5;
+		//c = float3 ( 1.0, 1.0, 1.0 );// (c + pow(c,0.707)*fTemp) * 0.5;
+		c = pow(c,0.5);
+		
 	}	
 	return c;
 }
@@ -248,12 +337,12 @@ float3 gammaForward_G4C ( float3 c )
 	oColorLo = ( oColorLo - fOffsetO ) * fMultiplierO;
 	
 	//High curve
-	oColorHi = pow ( c, 0.2707 );
+	fRatio = iGammaLevelG4C * 0.01;
+	fRatio = lerp ( 1.00, 0.20, fRatio );
+	oColorHi = pow ( c, fRatio );
 	
 	//Mix between Low and High
-	c = ( oColorLo * (1.0-oColorToGamma4) ) + ( oColorHi * oColorToGamma4 );
-	
-	return c;
+	return ( oColorLo * (1.0-oColorToGamma4) ) + ( oColorHi * oColorToGamma4 );
 }
 
 float3 gammaBackward ( float3 c )
@@ -299,7 +388,7 @@ float3 convertLMStoRGB ( float3 c )
 	c.g = g;
 	c.b = b;
 	c = clamp(c, 0.0, 1.0);
-	return gammaBackward ( c );
+	return c;
 }
 
 float3 convertLMStoOKLab ( float3 c )
@@ -397,44 +486,199 @@ float3 mainImageGetPixelYCbCr ( float2 uv )
 	return RGB_to_YCbCr ( image.Sample(textureSampler, uv).rgb );
 }
 
-float3 mainImageGetBlurBox5x5 ( float2 uv )
+
+/*
+[ 0.004922  0.009196  0.013380  0.015161  0.013380  0.009196  0.004922 ]
+[ 0.009196  0.017178  0.024994  0.028322  0.024994  0.017178  0.009196 ]
+[ 0.013380  0.024994  0.036364  0.041204  0.036364  0.024994  0.013380 ]
+[ 0.015161  0.028322  0.041204  0.046691  0.041204  0.028322  0.015161 ]
+[ 0.013380  0.024994  0.036364  0.041204  0.036364  0.024994  0.013380 ]
+[ 0.009196  0.017178  0.024994  0.028322  0.024994  0.017178  0.009196 ]
+[ 0.004922  0.009196  0.013380  0.015161  0.013380  0.009196  0.004922 ]
+*/
+
+float3 mainImageGetBlurBox7x7 ( float2 uv, float fRatio )
 {
-	float2 px = float2(2.0,2.0) / uv_size; //float2 ( 1.0, 1.0 );
-	float3 c = float3 ( 0.0, 0.0, 0.0 );
+	float2 px;
+	float3 c;
 	
-	c += mainImageGetPixelRGB ( uv + px * float2 ( -2.0, -2.0 ) );
-	c += mainImageGetPixelRGB ( uv + px * float2 ( -1.0, -2.0 ) );
-	c += mainImageGetPixelRGB ( uv + px * float2 (  0.0, -2.0 ) );
-	c += mainImageGetPixelRGB ( uv + px * float2 (  1.0, -2.0 ) );
-	c += mainImageGetPixelRGB ( uv + px * float2 (  2.0, -2.0 ) );
-
-	c += mainImageGetPixelRGB ( uv + px * float2 ( -2.0, -1.0 ) );
-	c += mainImageGetPixelRGB ( uv + px * float2 ( -1.0, -1.0 ) );
-	c += mainImageGetPixelRGB ( uv + px * float2 (  0.0, -1.0 ) );
-	c += mainImageGetPixelRGB ( uv + px * float2 (  1.0, -1.0 ) );
-	c += mainImageGetPixelRGB ( uv + px * float2 (  2.0, -1.0 ) );
-
-	c += mainImageGetPixelRGB ( uv + px * float2 ( -2.0,  0.0 ) );	
-	c += mainImageGetPixelRGB ( uv + px * float2 ( -1.0,  0.0 ) );
-	c += mainImageGetPixelRGB ( uv + px * float2 (  0.0,  0.0 ) );
-	c += mainImageGetPixelRGB ( uv + px * float2 (  1.0,  0.0 ) );
-	c += mainImageGetPixelRGB ( uv + px * float2 (  2.0,  0.0 ) );
-
-	c += mainImageGetPixelRGB ( uv + px * float2 ( -2.0,  1.0 ) );
-	c += mainImageGetPixelRGB ( uv + px * float2 ( -1.0,  1.0 ) );
-	c += mainImageGetPixelRGB ( uv + px * float2 (  0.0,  1.0 ) );
-	c += mainImageGetPixelRGB ( uv + px * float2 (  1.0,  1.0 ) );
-	c += mainImageGetPixelRGB ( uv + px * float2 (  2.0,  1.0 ) );
+	px = float2 ( fRatio,fRatio ) / uv_size;
+	c  = float3 ( 0.0, 0.0, 0.0 );
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -3.0, -3.0 ) ) * 0.004922;
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -2.0, -3.0 ) ) * 0.009196;
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -1.0, -3.0 ) ) * 0.013380;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  0.0, -3.0 ) ) * 0.015161;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  1.0, -3.0 ) ) * 0.013380;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  2.0, -3.0 ) ) * 0.009196;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  3.0, -3.0 ) ) * 0.004922;
 	
-	c += mainImageGetPixelRGB ( uv + px * float2 ( -2.0,  2.0 ) );
-	c += mainImageGetPixelRGB ( uv + px * float2 ( -1.0,  2.0 ) );
-	c += mainImageGetPixelRGB ( uv + px * float2 (  0.0,  2.0 ) );
-	c += mainImageGetPixelRGB ( uv + px * float2 (  1.0,  2.0 ) );
-	c += mainImageGetPixelRGB ( uv + px * float2 (  2.0,  2.0 ) );
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -3.0, -2.0 ) ) * 0.009196;
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -2.0, -2.0 ) ) * 0.017178;
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -1.0, -2.0 ) ) * 0.024994;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  0.0, -2.0 ) ) * 0.028322;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  1.0, -2.0 ) ) * 0.024994;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  2.0, -2.0 ) ) * 0.017178;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  3.0, -2.0 ) ) * 0.009196;
+
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -3.0, -1.0 ) ) * 0.013380;
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -2.0, -1.0 ) ) * 0.024994;
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -1.0, -1.0 ) ) * 0.036364;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  0.0, -1.0 ) ) * 0.041204;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  1.0, -1.0 ) ) * 0.036364;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  2.0, -1.0 ) ) * 0.024994;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  3.0, -1.0 ) ) * 0.013380;
+
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -3.0,  0.0 ) ) * 0.015161;	
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -2.0,  0.0 ) ) * 0.028322;	
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -1.0,  0.0 ) ) * 0.041204;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  0.0,  0.0 ) ) * 0.046691;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  1.0,  0.0 ) ) * 0.041204;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  2.0,  0.0 ) ) * 0.028322;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  3.0,  0.0 ) ) * 0.015161;
+
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -3.0,  1.0 ) ) * 0.013380;
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -2.0,  1.0 ) ) * 0.024994;
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -1.0,  1.0 ) ) * 0.036364;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  0.0,  1.0 ) ) * 0.041204;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  1.0,  1.0 ) ) * 0.036364;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  2.0,  1.0 ) ) * 0.024994;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  3.0,  1.0 ) ) * 0.013380;
 	
-	return c * (1.0 / 25.0);
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -3.0,  2.0 ) ) * 0.009196;
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -2.0,  2.0 ) ) * 0.017178;
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -1.0,  2.0 ) ) * 0.024994;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  0.0,  2.0 ) ) * 0.028322;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  1.0,  2.0 ) ) * 0.024994;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  2.0,  2.0 ) ) * 0.017178;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  3.0,  2.0 ) ) * 0.009196;
+
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -3.0,  3.0 ) ) * 0.004922;
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -2.0,  3.0 ) ) * 0.009196;
+	c += mainImageGetPixelRGB ( uv + px * float2 ( -1.0,  3.0 ) ) * 0.013380;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  0.0,  3.0 ) ) * 0.015161;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  1.0,  3.0 ) ) * 0.013380;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  2.0,  3.0 ) ) * 0.009196;
+	c += mainImageGetPixelRGB ( uv + px * float2 (  3.0,  3.0 ) ) * 0.004922;
+	
+	return c;
 
 }
+
+float3 mainImageGetBlur ( float2 uv )
+{
+	float3 c;
+	float2 px;
+	px = float2(1.0,1.0) / uv_size;
+	c  = float3 ( 0.0, 0.0, 0.0 );
+	
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 ( -3.0,  0.0 ), 5.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  3.0,  0.0 ), 5.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  0.0,  3.0 ), 5.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  0.0, -3.0 ), 5.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  0.0,  0.0 ), 5.0 )*1.50;
+	
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 ( -4.0, -4.0 ), 5.0 )*0.625;
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 ( -4.0,  4.0 ), 5.0 )*0.625;
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  4.0, -4.0 ), 5.0 )*0.625;
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  4.0,  4.0 ), 5.0 )*0.625;
+	
+	return c * 0.125;
+}
+
+float3 mainImageGlobalValue ( float2 uv )
+{
+	float3 c;
+	float2 px;
+	px = float2(1.0,1.0) / uv_size;
+	c  = float3 ( 0.0, 0.0, 0.0 );
+	
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  0.0,  0.0 ), 12.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 ( -7.0, -7.0 ), 12.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 ( -7.0,  7.0 ), 12.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  7.0, -7.0 ), 12.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  7.0,  7.0 ), 12.0 );
+	
+	return c * 0.2;
+}
+
+float3 mainImageGetMax ( float2 uv )
+{
+	float3 c;
+	float2 px;
+	px = float2 (1.0,1.0) / uv_size;
+	
+	c = mainImageGetPixelRGB ( uv + px * float2 (  0.0,  0.0 ) );
+	
+	/*
+    [loop] for (int i = -16; i <= 16; i++) {
+    	[loop] for (int k = -16; k <= 16; k++) {
+			c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (  ( float(i),   float(k) ) ));
+        }
+    }
+	*/
+	
+	
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (  -4.0,   0.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (   4.0,   0.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (   0.0,   4.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (   0.0,  -4.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (  -8.0,   0.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (   8.0,   0.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (   0.0,   8.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (   0.0,  -8.0 ) ));
+	
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 ( -16.0,   0.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (  16.0,   0.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (   0.0,  16.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (   0.0, -16.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 ( -32.0,   0.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (  32.0,   0.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (   0.0,  32.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (   0.0, -32.0 ) ));
+	
+	
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 ( -2.0, -2.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 ( -2.0,  2.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (  2.0, -2.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (  2.0,  2.0 ) ));
+
+	
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 ( -4.0, -4.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 ( -4.0,  4.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (  4.0, -4.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (  4.0,  4.0 ) ));
+	
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 ( -7.0, -7.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 ( -7.0,  7.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (  7.0, -7.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (  7.0,  7.0 ) ));
+	
+
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 ( -9.0, -9.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 ( -9.0,  9.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (  9.0, -9.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (  9.0,  9.0 ) ));
+	
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 ( -14.0, -14.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 ( -14.0,  14.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (  14.0, -14.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (  14.0,  14.0 ) ));
+
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 ( -19.0, -19.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 ( -19.0,  19.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (  19.0, -19.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (  19.0,  19.0 ) ));
+	
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 ( -24.0, -24.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 ( -24.0,  24.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (  24.0, -24.0 ) ));
+	c = max ( c, mainImageGetPixelRGB ( uv + px * float2 (  24.0,  24.0 ) ));
+	
+	
+	return c;
+}
+
+
 
 /*
 	Super quantification
@@ -755,96 +999,88 @@ float3 mainImageGetSuperQuantificationYCbCr ( float2 uv )
 
 
 
-float3 mainImageGetSuperQuantificationLowRes ( float2 uv )
+float wrap_pi(float x)
 {
-
+    x = fmod(x + 3.14159265, 6.28318531);
+    if (x < 0.0) x += 6.28318531;
+    return x - 3.14159265;
 }
+
+float greenBoostMask(float h)
+{
+    const float hGreen = 2.48; // ~142°
+    const float width  = 0.75; // largeur d'action en radians
+
+    float d = abs(wrap_pi(h - hGreen));
+
+    // Masque doux : 1 au centre du vert, 0 hors zone
+    return saturate(1.0 - d / width);
+}
+
 
 float4 mainImage(vertData v_in) : TARGET
 {
 	float4 			oPixel4;
 	float3			oPixel3;
 	float3			oPixelBlur3;
+	float3			oPixelGlobal;
 	
 	//Get 1 pixel
 	oPixel4 = image.Sample(textureSampler, v_in.uv );
 	oPixel3	= oPixel4.rgb;
 	
+	//Get blured pixel
+	oPixelBlur3		=	mainImageGetBlur ( v_in.uv );
+	
+	//Global pixel
+	oPixelGlobal	=	mainImageGlobalValue ( v_in.uv );
+	
 	//
 	//	Quantification processing
 	//
-	if (iQuantification==1)
+	if (iProcessingEnableReQuantifier==1)
 	{
-		oPixel3			=	mainImageGetSuperQuantificationRGB ( v_in.uv );
-	}
-	else if (iQuantification==2)
-	{
-		oPixel3			=	YCbCr_to_RGB(mainImageGetSuperQuantificationYCbCr ( v_in.uv ));
-	}
-	else if (iQuantification==3)
-	{
-		float3 oNewPixel3;
-		oNewPixel3		=	mainImageGetSuperQuantificationRGB ( v_in.uv );
-		oPixel4.rgb		=	abs(oPixel3-oNewPixel3) * 256;
-		oPixel4.a 		= 	1.0;
-		return saturate(oPixel4);	
-	}
-	else if (iQuantification==4)
-	{
-		float3 oNewPixel3;
-		oNewPixel3		=	YCbCr_to_RGB(mainImageGetSuperQuantificationYCbCr ( v_in.uv ));
-		oPixel4.rgb		=	abs(oPixel3-oNewPixel3) * 256;
-		oPixel4.a 		= 	1.0;
-		return saturate(oPixel4);	
+		if (iQuantification==1)
+		{
+			oPixel3			=	mainImageGetSuperQuantificationRGB ( v_in.uv );
+		}
+		else if (iQuantification==2)
+		{
+			oPixel3			=	YCbCr_to_RGB(mainImageGetSuperQuantificationYCbCr ( v_in.uv ));
+		}
+		else if (iQuantification==3)
+		{
+			float3 oNewPixel3;
+			oNewPixel3		=	mainImageGetSuperQuantificationRGB ( v_in.uv );
+			oPixel4.rgb		=	abs(oPixel3-oNewPixel3) * 256;
+			oPixel4.a 		= 	1.0;
+			return saturate(oPixel4);	
+		}
+		else if (iQuantification==4)
+		{
+			float3 oNewPixel3;
+			oNewPixel3		=	YCbCr_to_RGB(mainImageGetSuperQuantificationYCbCr ( v_in.uv ));
+			oPixel4.rgb		=	abs(oPixel3-oNewPixel3) * 256;
+			oPixel4.a 		= 	1.0;
+			return saturate(oPixel4);	
+		}
 	}
 	
 	
-	/*	
-	if (iQuantification==2)
-	{
-		float3 oPixel3Quantification	= mainImageGetSuperQuantification ( v_in.uv );
-		if ( (oPixel3Quantification.r!=oPixel3.r) ||
-			 (oPixel3Quantification.g!=oPixel3.g) ||
-			 (oPixel3Quantification.b!=oPixel3.b) )
-			oPixel3 = float3 ( 1.0, 1.0, 1.0 );
-	}
-	else if (iQuantification==1)
-	{
-		oPixel3			=	yuv_to_rgb(mainImageGetSuperQuantification ( v_in.uv ));
-	}
-	else if (iQuantification==3)
-	{
-		float3 oNewPixel3;
-		oNewPixel3		=	mainImageGetPixel ( v_in.uv );
-		oNewPixel3 		= 	yuv_to_rgb(oNewPixel3);
-		
-		
-		oPixel4.rgb		=	abs(oPixel3-oNewPixel3) * 8;
-		oPixel4.a 		= 	1.0;
-		return saturate(oPixel4);	
-	}
-	else if (iQuantification==4)
-	{
-		float3 oNewPixel3;
-		//oPixel3			=	mainImageGetPixel ( v_in.uv );
-		oNewPixel3		=	mainImageGetSuperQuantification ( v_in.uv );
-		//oPixel3 		= 	yuv_to_rgb(oPixel3);
-		oNewPixel3 		= 	yuv_to_rgb(oNewPixel3);
-		
-		oPixel4.rgb		=	abs (oPixel3-oNewPixel3) * 8;
-		oPixel4.a 		= 	1.0;
-		return saturate(oPixel4);	
-	}
-	*/
 	
 
 	//
-	//	Clipping compensation
+	//	Clipping compensation (currently disabled)
 	//
-	oPixel3			=   clippingCompensation ( oPixel3 );
+	/*
+	if (iProcessingEnableDeClipping==1)
+	{
+		float3 oPixelMax;
+		oPixelMax 		= 	mainImageGetMax ( v_in.uv );
+		oPixel3			=   clippingCompensation ( oPixel3, oPixelMax );
+	}
+	*/
 	
-	//Get 1 blured pixel
-	oPixelBlur3		=	mainImageGetBlurBox5x5 ( v_in.uv );
 	
 	//Convert RGB to OKLCh
 	oPixel3			= 	convertRGBtoLMS ( oPixel3 );
@@ -855,6 +1091,12 @@ float4 mainImage(vertData v_in) : TARGET
 	oPixelBlur3		=   convertLMStoOKLab ( oPixelBlur3 );
 	oPixelBlur3		=   convertOKLabtoOKLCh ( oPixelBlur3 );
 
+	oPixelGlobal	= 	convertRGBtoLMS ( oPixelGlobal );
+	oPixelGlobal	=   convertLMStoOKLab ( oPixelGlobal );
+	oPixelGlobal	=   convertOKLabtoOKLCh ( oPixelGlobal );
+
+	
+
 	float fPixel_L 	= 	oPixel3.r;
 	float fPixel_C 	= 	oPixel3.g;
 	float fPixel_h 	= 	oPixel3.b;
@@ -863,8 +1105,14 @@ float4 mainImage(vertData v_in) : TARGET
 	float fPixelBlur_C 	= 	oPixelBlur3.g;
 	float fPixelBlur_h 	= 	oPixelBlur3.b;
 	
+	float oPixelGlobal_L 	= 	oPixelGlobal.r;
+	float oPixelGlobal_C 	= 	oPixelGlobal.g;
+	float oPixelGlobal_h 	= 	oPixelGlobal.b;
+	
+	
 	//sk is desaturation ratio (0.0 = min, 1.0 = max)
-	float sk		=   fIntensity;	
+	float fIntensity	= iIntensity * 0.01;
+	float sk			= fIntensity;	
 	
 	float fTemp;
 	
@@ -939,18 +1187,8 @@ float4 mainImage(vertData v_in) : TARGET
 		fAlpha_h = 0.0;
 	}
 	
-	//fSkinAlpha = fAlpha_h * 1.50 * fAlpha_C;
-	//fSkinAlpha = (fSkinAlpha * fSkinAlpha) * 0.5;
-	
-	
-	
 	fSkinAlpha = fAlpha_C*fAlpha_h;
-	
-	
 	fSkinAlpha = clamp ( fSkinAlpha, 0.0, 1.0 );
-	
-	
-	
 	
 	if (iSkinDetection==1)
 	{
@@ -975,35 +1213,132 @@ float4 mainImage(vertData v_in) : TARGET
 		
 		float fSkinMin_C;
 		
-		fSkinMin_C = (fPixel_C + fSkinA_C + fSkinB_C) * 0.2;
-		
-		//fSkinAlpha *= 0.1;
-		
-		//fPixel_L = lerp ( fPixel_L, fSkin_L, fSkinAlpha );
-		fPixel_C = lerp ( fPixel_C, fSkinMin_C, fSkinAlpha * fIntensity );
-		//fPixel_h = lerp ( fPixel_h, fSkinA_h, fSkinAlpha * 0.3 );
-		
-		fPixel_h = lerp ( fPixel_h, 0.82, fSkinAlpha * fIntensity * 0.2 );
-	
-	
 		//
-		//	Chemical film processing
+		//	Skin processing
 		//
-		fTemp = pow ( fPixelBlur_L, 6 );
-		fPixel_C = lerp ( fPixel_C, fPixel_C*(1.0-fLumSat), fTemp );
+		if (iProcessingEnableSkin==1)
+		{
+			
+			fSkinMin_C = (fPixel_C + fSkinA_C + fSkinB_C) * 0.2;
+			fPixel_C = lerp ( fPixel_C, fSkinMin_C, fSkinAlpha * fIntensity );
+			fPixel_h = lerp ( fPixel_h, 0.82, fSkinAlpha * fIntensity * 0.2 );
+		
+			//
+			//	Boost green on skin tone
+			//
+			fTemp = (fPixel_h+oPixelGlobal_h)*0.55;
+			fTemp = min ( fTemp, 1.40 );
+			fPixel_h = lerp ( fPixel_h, fTemp, fSkinAlpha );
+		}
+		
+		
+		
+		if (iProcessingEnableFilm==1)
+		{
+			//
+			//	Film Over saturation processing with skin de-compensation
+			//
+			float fOverSaturation = iOverSaturation * 0.01;
+			fTemp = ((1.00 - fSkinAlpha)*0.60) + 0.40;
+			fTemp = fOverSaturation * fTemp;
+			fPixel_C = pow ( fPixel_C, 1.0 - (fTemp*0.25) );	
+		
+			//
+			//	Chemical film processing
+			//
+			float fLumSat = iLumSat * 0.01;
+			fTemp = pow ( fPixelBlur_L, 6 );
+			fPixel_C = lerp ( fPixel_C, fPixel_C*(1.0-fLumSat), fTemp );
+		}
+		
 	}
 	
 	oPixel3.r		= 	fPixel_L;
 	oPixel3.g		= 	fPixel_C;
 	oPixel3.b		= 	fPixel_h;
-	
+
+	//
+	//	Convert OKLCh to RGB
+	//
 	oPixel3			=   convertOKLChtoOKLab ( oPixel3 );
 	oPixel3			=   convertOKLabtoLMS ( oPixel3 );
 	oPixel3			=	convertLMStoRGB ( oPixel3 );
 	
-	oPixel4.rgb		=	oPixel3;
-	oPixel4.a 		= 	1.0;
+	//
+	//	Film temperature
+	//
+	if (iProcessingEnableFilm==1)
+	{
 	
+		//Get luminance value
+		float fY = dot ( oPixel3, float3 ( 0.2126, 0.7152, 0.0722 ) );
+		
+		if (iFilmTemperature==1)
+		{
+			float3 oPixelLo;
+			float3 oPixelHi;
+			float3 oPixelLH;
+			
+			oPixelHi.r 	= pow ( oPixel3.r, 1.150 );
+			oPixelHi.g 	= pow ( oPixel3.g, 0.850 );
+			oPixelHi.b 	= pow ( oPixel3.b, 0.900 );
+			
+			oPixelLo.r	= oPixel3.r * 0.900;
+			oPixelLo.g  = oPixel3.g * 1.040;
+			oPixelLo.b  = oPixel3.b * 1.020;
+			
+			fTemp = pow ( fY, 0.5 );
+			oPixelLH 	= lerp ( oPixelLo, oPixelHi, fTemp );
+			
+			fTemp = pow ( fY, 2.0 );
+			oPixelLH 	= lerp ( oPixelLH, oPixel3, fTemp );
+			
+			oPixel3  	= lerp ( oPixelLH, oPixel3, fSkinAlpha );
+		}
+		
+		if (iFilmTemperature==2)
+		{
+			float3 oPixelLo;
+			float3 oPixelHi;
+			float3 oPixelLH;
+			
+			oPixelHi.r 	= pow ( oPixel3.r, 0.870 );
+			oPixelHi.g 	= pow ( oPixel3.g, 1.177 );
+			oPixelHi.b 	= pow ( oPixel3.b, 1.111 );
+			
+			oPixelLo.r	= oPixel3.r * 1.111;
+			oPixelLo.g  = oPixel3.g * 0.962;
+			oPixelLo.b  = oPixel3.b * 0.980;
+			
+			fTemp = pow ( fY, 0.5 );
+			oPixelLH 	= lerp ( oPixelLo, oPixelHi, fTemp );
+			
+			fTemp = pow ( fY, 2.0 );
+			oPixelLH 	= lerp ( oPixelLH, oPixel3, fTemp );
+			
+			oPixel3  	= lerp ( oPixelLH, oPixel3, fSkinAlpha );
+		}
+		
+	}
+	
+	
+	
+	
+	
+	//Apply backward gamma
+	oPixel3			=	gammaBackward ( oPixel3 );
+
+	//
+	//	Boost green on skin tone
+	//
+	//oPixel3.g		=   pow ( oPixel3.g, 1.0 - (fSkinAlpha*.04) );
+	
+	
+	
+	
+	
+	oPixel4.rgb		=	oPixel3;
+	oPixel4.a 		= 	1.0;	
     return saturate(oPixel4);
 }
 
