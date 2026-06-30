@@ -48,6 +48,15 @@ This processing does not affect skin tones.
 The processing of skin tones yields a more natural-looking image that also feels more lifelike and tactile.  
 If the settings are excessive, the colors will appear washed out.  
 
+## Installation
+You must have already installed `obs-shaderfilter` in order to use `AmberFX`.  
+1 - Download `amberfx.effect` file  
+2 - In OBS, select your source  
+3 - Add the filter "user-defined shader" to your source  
+4 - Check "Use Effect File (.effect)  
+5 - Check Load shader text from file  
+6 - Browse to your `amberfx.effect` file  
+7 - Done  
 
 ## Parameters
 
