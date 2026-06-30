@@ -30,6 +30,11 @@ AmberFX uses obs-shaderfilter 2.6.0+ from exeldro (https://obsproject.com/forum/
 - SNR improved from 3.64dB or +0.6bit on real pictures.
 
 
+**DeClipping**  
+This process attempts to detect saturated and/or anomalous areas in order to correct chrominance errors.  
+**Currently, this process has been disabled internally.**  
+ 
+
 **Gamma correction**  
 G4C gamma correction aims to make small variations in dark tones more visible without crushing the highlights.  
 
