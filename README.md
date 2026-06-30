@@ -134,7 +134,7 @@ Vary from `0` to `100` : Hardness of skin processing.
 `100` Very hard and gray level  
 Default is `25`  
 
-### Advanced parameters
+## Advanced parameters
 
 ### Skin checker
 `Normal` Normal skin processing mode  
