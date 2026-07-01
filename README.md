@@ -94,7 +94,7 @@ Default value is `Enable`
 
 ### Quantification
 If used, try to recreate more bits from original source material.  
-`Normal` Keep original quantification (no ReQuantification at all)  
+`Disabled` Keep original quantification (no ReQuantification at all)  
 `RGB ReQuantifier` Apply ReQuantifier on RGB components (if source is RGB only)  
 `YCbCr ReQuantifier` Apply ReQuantifier on YCbCr components (if source is YCbCr only)  
 `Check RGB ReQuant` Show effect on RGB ReQuantifier (use it to detect source mode - higher is better)  
@@ -132,13 +132,16 @@ Default is `Neutral`
 Vary from `0` to `100` : Hardness of skin processing.  
 `0` No effect at all  
 `100` Very hard and gray level  
+Best results could be observed in the range of 25 to 35.  
 Default is `25`  
+
 
 ## Advanced parameters
 
 ### Skin checker
 `Normal` Normal skin processing mode  
-`Show area` Allow you to show all detected and processed area (useful to set all parameters below)  
+`Show skin tone` Allow you to show all detected and processed skin tone area (useful to set all parameters below)  
+`Show background` Allow you to show all detected and processed background area (useful to set all parameters below)  
 
 ### SkinTone C_lo
 `0.00` Minimal chroma value low threshold  
@@ -156,13 +159,13 @@ Default is `25`
 `0.10` Maximal chroma value margin threshold  
 
 ### SkinTone h_lo
-`0.05` Minimal hue value low threshold  
-`0.10` Default hue value low threshold  
+`-0.40` Minimal hue value low threshold  
+`-0.30` Default hue value low threshold  
 `0.50` Maximal hue value low threshold  
 
 ### SkinTone h_hi
 `1.00` Minimal hue value high threshold  
-`0.30` Default hue value high threshold  
+`1.30` Default hue value high threshold  
 `1.80` Maximal hue value high threshold  
 
 ### SkinTone h_margin
