@@ -6,6 +6,11 @@
 	
 	https://github.com/AlexiaGossa/AmberFX
 	
+	2026-07-02 Alexia Gossa
+	- Correct YCbCr ReQuantification error on some value
+	- Add more fine skin tone detection
+	- Adding background detection from skin tone detection
+	
 	2026-06-29 Alexia Gossa
 	- Refactoring user interface with more efficient settings
 	- Add 2 new blur filters for skin and film processing
@@ -106,7 +111,7 @@ uniform int iQuantification<
 	string label 			= "Quantification";
 	string widget_type 		= "select";
 	int    option_0_value 	= 0;
-	string option_0_label 	= "Normal";
+	string option_0_label 	= "Disabled";
 	int    option_1_value 	= 1;
 	string option_1_label 	= "RGB ReQuantifier";
 	int    option_2_value 	= 2;
@@ -183,7 +188,9 @@ uniform int iSkinDetection<
 	int    option_0_value 	= 0;
 	string option_0_label 	= "Normal";
 	int    option_1_value 	= 1;
-	string option_1_label 	= "Show area";
+	string option_1_label 	= "Show skin tone";
+	int    option_2_value 	= 2;
+	string option_2_label 	= "Show background";
 > = 0;
 
 
@@ -214,10 +221,10 @@ uniform float fSkinTone_C_margin<
 uniform float fSkinTone_h_lo<
     string label 			= "SkinTone h_lo";
     string widget_type 		= "slider";
-    float minimum 			= 0.05;
+    float minimum 			= -0.40;
     float maximum 			= 0.50;
     float step 				= 0.01;
-> = 0.10;
+> = -0.30;
 
 uniform float fSkinTone_h_hi<
     string label 			= "SkinTone h_hi";
@@ -432,19 +439,19 @@ float3 convertOKLChtoOKLab ( float3 c )
 
 float3 RGB_to_YCbCr(float3 c)
 {
-    float r =       dot(c, float3(  0.299000,  0.587000,  0.114000 ));
-    float g = 0.5 + dot(c, float3( -0.168736, -0.331264,  0.500000 ));
-    float b = 0.5 + dot(c, float3(  0.500000, -0.418688, -0.081312 ));
-    return float3(r, g, b);
+    float Y  =       dot(c, float3(  0.299000,  0.587000,  0.114000 ));
+    float Cb = 0.5 + dot(c, float3( -0.168736, -0.331264,  0.500000 ));
+    float Cr = 0.5 + dot(c, float3(  0.500000, -0.418688, -0.081312 ));
+    return saturate(float3(Y, Cb, Cr));
 }
 
 float3 YCbCr_to_RGB(float3 c)
 {
-	float3 fTemp3 = c + float3(0,-0.5,-0.5);
-    float r = dot(fTemp3, float3( 1.0,  0.000000,  1.402000 ));
-    float g = dot(fTemp3, float3( 1.0, -0.344136, -0.714136 ));
-    float b = dot(fTemp3, float3( 1.0,  1.772000,  0.000000 ));
-	return float3(r, g, b);
+	float3 YCbCr = c + float3(0,-0.5,-0.5);
+    float r = dot(YCbCr, float3( 1.0,  0.000000,  1.402000 ));
+    float g = dot(YCbCr, float3( 1.0, -0.344136, -0.714136 ));
+    float b = dot(YCbCr, float3( 1.0,  1.772000,  0.000000 ));
+	return saturate(float3(r, g, b));
 }
 
 float3 mainImageGetPixel ( float2 uv )
@@ -469,16 +476,6 @@ float3 mainImageGetPixel ( float2 uv )
 float3 mainImageGetPixelRGB ( float2 uv )
 {
 	return image.Sample(textureSampler, uv).rgb;
-	/*
-
-	float3 oPixel;
-	
-	oPixel = image.Sample(textureSampler, uv).rgb;;
-	oPixel = oPixel * 16;
-	oPixel = floor ( oPixel + 0.5 );
-	return oPixel * (1.0/256.0);
-	//return image.Sample(textureSampler, uv).rgb;
-	*/	
 }
 
 float3 mainImageGetPixelYCbCr ( float2 uv )
@@ -487,15 +484,7 @@ float3 mainImageGetPixelYCbCr ( float2 uv )
 }
 
 
-/*
-[ 0.004922  0.009196  0.013380  0.015161  0.013380  0.009196  0.004922 ]
-[ 0.009196  0.017178  0.024994  0.028322  0.024994  0.017178  0.009196 ]
-[ 0.013380  0.024994  0.036364  0.041204  0.036364  0.024994  0.013380 ]
-[ 0.015161  0.028322  0.041204  0.046691  0.041204  0.028322  0.015161 ]
-[ 0.013380  0.024994  0.036364  0.041204  0.036364  0.024994  0.013380 ]
-[ 0.009196  0.017178  0.024994  0.028322  0.024994  0.017178  0.009196 ]
-[ 0.004922  0.009196  0.013380  0.015161  0.013380  0.009196  0.004922 ]
-*/
+
 
 float3 mainImageGetBlurBox7x7 ( float2 uv, float fRatio )
 {
@@ -563,6 +552,68 @@ float3 mainImageGetBlurBox7x7 ( float2 uv, float fRatio )
 	return c;
 
 }
+
+float3 mainImageGetBlurMinimal ( float2 uv )
+{
+	return mainImageGetBlurBox7x7 ( uv, 1.0 );
+}
+
+float3 mainImageGetBlurLow ( float2 uv )
+{
+	float3 c;
+	float2 px;
+	px = float2(1.0,1.0) / uv_size;
+	
+	c  = float3 ( 0.0, 0.0, 0.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 ( -3.0,  0.0 ), 1.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  3.0,  0.0 ), 1.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  0.0,  3.0 ), 1.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  0.0, -3.0 ), 1.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  0.0,  0.0 ), 1.0 )*1.500;
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 ( -3.0, -3.0 ), 5.0 )*0.625;
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 ( -3.0,  3.0 ), 5.0 )*0.625;
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  3.0, -3.0 ), 5.0 )*0.625;
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  3.0,  3.0 ), 5.0 )*0.625;
+	return c * 0.125;
+	/*
+	c  = float3 ( 0.0, 0.0, 0.0 );
+	
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 ( -2.0,  0.0 ), 5.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  2.0,  0.0 ), 5.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  0.0,  2.0 ), 5.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  0.0, -2.0 ), 5.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  0.0,  0.0 ), 5.0 )*1.50;
+	
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 ( -3.0, -3.0 ), 5.0 )*0.625;
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 ( -3.0,  3.0 ), 5.0 )*0.625;
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  3.0, -3.0 ), 5.0 )*0.625;
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  3.0,  3.0 ), 5.0 )*0.625;
+	
+	return c * 0.125;
+	*/
+}
+
+float3 mainImageGetBlurHigh ( float2 uv )
+{
+	float3 c;
+	float2 px;
+	px = float2(1.0,1.0) / uv_size;
+	c  = float3 ( 0.0, 0.0, 0.0 );
+	
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 ( -3.0,  0.0 ), 5.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  3.0,  0.0 ), 5.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  0.0,  3.0 ), 5.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  0.0, -3.0 ), 5.0 );
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  0.0,  0.0 ), 5.0 )*1.50;
+	
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 ( -4.0, -4.0 ), 5.0 )*0.625;
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 ( -4.0,  4.0 ), 5.0 )*0.625;
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  4.0, -4.0 ), 5.0 )*0.625;
+	c += mainImageGetBlurBox7x7 ( uv + px * float2 (  4.0,  4.0 ), 5.0 )*0.625;
+	
+	return c * 0.125;
+}
+
 
 float3 mainImageGetBlur ( float2 uv )
 {
@@ -993,7 +1044,7 @@ float3 mainImageGetSuperQuantificationYCbCr ( float2 uv )
 	//oRatioTotal = 1 / (oCompensationH + oCompensationV + oCompensationD1 + oCompensationD2);
 	//return ( oPixelH * oCompensationH + oPixelV * oCompensationV + oPixelD1 * oCompensationD1 + oPixelD2 * oCompensationD2 ) * oRatioTotal;
 	
-	return ( oPixelH + oPixelV+ oPixelD1 + oPixelD2 ) * 0.25;
+	return ( oPixelH + oPixelV + oPixelD1 + oPixelD2 ) * 0.25;
 }
 
 
@@ -1024,16 +1075,20 @@ float4 mainImage(vertData v_in) : TARGET
 	float3			oPixel3;
 	float3			oPixelBlur3;
 	float3			oPixelGlobal;
+	float3			oPixelBlurMinimal;
 	
 	//Get 1 pixel
 	oPixel4 = image.Sample(textureSampler, v_in.uv );
 	oPixel3	= oPixel4.rgb;
 	
+	//Get minimal blur pixel
+	oPixelBlurMinimal = mainImageGetBlurMinimal ( v_in.uv );
+	
 	//Get blured pixel
-	oPixelBlur3		=	mainImageGetBlur ( v_in.uv );
+	oPixelBlur3		=	mainImageGetBlurLow ( v_in.uv );
 	
 	//Global pixel
-	oPixelGlobal	=	mainImageGlobalValue ( v_in.uv );
+	oPixelGlobal	=	mainImageGetBlurHigh ( v_in.uv );
 	
 	//
 	//	Quantification processing
@@ -1046,7 +1101,8 @@ float4 mainImage(vertData v_in) : TARGET
 		}
 		else if (iQuantification==2)
 		{
-			oPixel3			=	YCbCr_to_RGB(mainImageGetSuperQuantificationYCbCr ( v_in.uv ));
+			//oPixel3			=	YCbCr_to_RGB(mainImageGetSuperQuantificationYCbCr ( v_in.uv ));
+			oPixel3	= YCbCr_to_RGB(RGB_to_YCbCr(oPixel3));
 		}
 		else if (iQuantification==3)
 		{
@@ -1087,9 +1143,13 @@ float4 mainImage(vertData v_in) : TARGET
 	oPixel3			=   convertLMStoOKLab ( oPixel3 );
 	oPixel3			=   convertOKLabtoOKLCh ( oPixel3 );
 	
-	oPixelBlur3		= 	convertRGBtoLMS ( oPixelBlur3 );
-	oPixelBlur3		=   convertLMStoOKLab ( oPixelBlur3 );
-	oPixelBlur3		=   convertOKLabtoOKLCh ( oPixelBlur3 );
+	oPixelBlur3			= 	convertRGBtoLMS ( oPixelBlur3 );
+	oPixelBlur3			=   convertLMStoOKLab ( oPixelBlur3 );
+	oPixelBlur3			=   convertOKLabtoOKLCh ( oPixelBlur3 	);
+		
+	oPixelBlurMinimal	= 	convertRGBtoLMS ( oPixelBlurMinimal );
+	oPixelBlurMinimal   =   convertLMStoOKLab ( oPixelBlurMinimal );
+	oPixelBlurMinimal   =   convertOKLabtoOKLCh ( oPixelBlurMinimal );
 
 	oPixelGlobal	= 	convertRGBtoLMS ( oPixelGlobal );
 	oPixelGlobal	=   convertLMStoOKLab ( oPixelGlobal );
@@ -1110,14 +1170,8 @@ float4 mainImage(vertData v_in) : TARGET
 	float oPixelGlobal_h 	= 	oPixelGlobal.b;
 	
 	
-	//sk is desaturation ratio (0.0 = min, 1.0 = max)
 	float fIntensity	= iIntensity * 0.01;
-	float sk			= fIntensity;	
-	
 	float fTemp;
-	
-	fTemp			= 	1.0 - (fPixelBlur_L*sk);
-	
 	
 	
 	//
@@ -1136,6 +1190,7 @@ float4 mainImage(vertData v_in) : TARGET
 	float fAlpha_C;
 	float fAlpha_h;
 	float fSkinAlpha;
+	float fBackAlpha;
 	
 	fSkinTone_C_lo2 = fSkinTone_C_lo - fSkinTone_C_margin;
 	fSkinTone_C_hi2 = fSkinTone_C_hi + fSkinTone_C_margin;
@@ -1152,6 +1207,11 @@ float4 mainImage(vertData v_in) : TARGET
 
 
 
+	//
+	//	Detect skin tone based on pixel blur "low"
+	//
+	fPixelBlur_C 	= 	oPixelBlur3.g;
+	fPixelBlur_h 	= 	oPixelBlur3.b;
 	
 	if ((fPixelBlur_C>=fSkinTone_C_lo) && (fPixelBlur_C<=fSkinTone_C_hi))
 	{
@@ -1190,9 +1250,66 @@ float4 mainImage(vertData v_in) : TARGET
 	fSkinAlpha = fAlpha_C*fAlpha_h;
 	fSkinAlpha = clamp ( fSkinAlpha, 0.0, 1.0 );
 	
+	//Initialize background detection
+	fBackAlpha = 1.0 - fSkinAlpha;
+	
+	//
+	//	Detect skin tone based on pixel blur "minimal"
+	//
+	fPixelBlur_C 	= 	oPixelBlurMinimal.g;
+	fPixelBlur_h 	= 	oPixelBlurMinimal.b;
+	
+	if ((fPixelBlur_C>=fSkinTone_C_lo) && (fPixelBlur_C<=fSkinTone_C_hi))
+	{
+		fAlpha_C = 1.0;
+	}
+	else if ( (fPixelBlur_C>fSkinTone_C_lo2) && (fPixelBlur_C<fSkinTone_C_lo) )
+	{
+		fAlpha_C = (fPixelBlur_C - fSkinTone_C_lo2) * fSkinTone_C_mlo;
+	}
+	else if ( (fPixelBlur_C>fSkinTone_C_hi) && (fPixelBlur_C<fSkinTone_C_hi2) )
+	{
+		fAlpha_C = 1.0 - ( (fPixelBlur_C - fSkinTone_C_hi) * fSkinTone_C_mhi );
+	}
+	else
+	{
+		fAlpha_C = 0.0;
+	}
+
+	if ((fPixelBlur_h>=fSkinTone_h_lo) && (fPixelBlur_h<=fSkinTone_h_hi))
+	{
+		fAlpha_h = 1.0;
+	}
+	else if ( (fPixelBlur_h>fSkinTone_h_lo2) && (fPixelBlur_h<fSkinTone_h_lo) )
+	{
+		fAlpha_h = (fPixelBlur_h - fSkinTone_h_lo2) * fSkinTone_h_mlo;
+	}
+	else if ( (fPixelBlur_h>fSkinTone_h_hi) && (fPixelBlur_h<fSkinTone_h_hi2) )
+	{
+		fAlpha_h = 1.0 - ( (fPixelBlur_h - fSkinTone_h_hi) * fSkinTone_h_mhi );
+	}
+	else
+	{
+		fAlpha_h = 0.0;
+	}
+	
+	fTemp = fAlpha_C*fAlpha_h;
+	fTemp = clamp ( fTemp, 0.0, 1.0 );
+	fSkinAlpha = max ( fSkinAlpha, fTemp );
+	
+	//Compensation for background detection
+	fBackAlpha = lerp ( fBackAlpha, 0.0, fSkinAlpha );
+	
+	
 	if (iSkinDetection==1)
 	{
 		fPixel_L		=   fSkinAlpha;
+		fPixel_C 		=   0.0;
+		fPixel_h		=	0.0;
+	}
+	else if (iSkinDetection==2)
+	{
+		fPixel_L		=   fBackAlpha;
 		fPixel_C 		=   0.0;
 		fPixel_h		=	0.0;
 	}
@@ -1218,7 +1335,6 @@ float4 mainImage(vertData v_in) : TARGET
 		//
 		if (iProcessingEnableSkin==1)
 		{
-			
 			fSkinMin_C = (fPixel_C + fSkinA_C + fSkinB_C) * 0.2;
 			fPixel_C = lerp ( fPixel_C, fSkinMin_C, fSkinAlpha * fIntensity );
 			fPixel_h = lerp ( fPixel_h, 0.82, fSkinAlpha * fIntensity * 0.2 );
@@ -1239,16 +1355,17 @@ float4 mainImage(vertData v_in) : TARGET
 			//	Film Over saturation processing with skin de-compensation
 			//
 			float fOverSaturation = iOverSaturation * 0.01;
-			fTemp = ((1.00 - fSkinAlpha)*0.60) + 0.40;
-			fTemp = fOverSaturation * fTemp;
-			fPixel_C = pow ( fPixel_C, 1.0 - (fTemp*0.25) );	
+			fTemp 		= (fBackAlpha*0.60) + 0.40;
+			fTemp 		= fOverSaturation * fTemp;
+			fPixel_C 	= pow ( fPixel_C, 1.0 - (fTemp*0.25) );
 		
 			//
 			//	Chemical film processing
 			//
 			float fLumSat = iLumSat * 0.01;
-			fTemp = pow ( fPixelBlur_L, 6 );
-			fPixel_C = lerp ( fPixel_C, fPixel_C*(1.0-fLumSat), fTemp );
+			fTemp 		= pow ( fPixelBlur_L, 6 );
+			fTemp 		= lerp ( fPixel_C, fPixel_C*(1.0-fLumSat), fTemp );
+			fPixel_C 	= lerp ( fPixel_C, fTemp, fBackAlpha );
 		}
 		
 	}
@@ -1293,7 +1410,7 @@ float4 mainImage(vertData v_in) : TARGET
 			fTemp = pow ( fY, 2.0 );
 			oPixelLH 	= lerp ( oPixelLH, oPixel3, fTemp );
 			
-			oPixel3  	= lerp ( oPixelLH, oPixel3, fSkinAlpha );
+			oPixel3  	= lerp ( oPixel3, oPixelLH, fBackAlpha );
 		}
 		
 		if (iFilmTemperature==2)
@@ -1316,7 +1433,7 @@ float4 mainImage(vertData v_in) : TARGET
 			fTemp = pow ( fY, 2.0 );
 			oPixelLH 	= lerp ( oPixelLH, oPixel3, fTemp );
 			
-			oPixel3  	= lerp ( oPixelLH, oPixel3, fSkinAlpha );
+			oPixel3  	= lerp ( oPixel3, oPixelLH, fBackAlpha );
 		}
 		
 	}
@@ -1328,14 +1445,6 @@ float4 mainImage(vertData v_in) : TARGET
 	//Apply backward gamma
 	oPixel3			=	gammaBackward ( oPixel3 );
 
-	//
-	//	Boost green on skin tone
-	//
-	//oPixel3.g		=   pow ( oPixel3.g, 1.0 - (fSkinAlpha*.04) );
-	
-	
-	
-	
 	
 	oPixel4.rgb		=	oPixel3;
 	oPixel4.a 		= 	1.0;	
